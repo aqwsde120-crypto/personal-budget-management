@@ -140,7 +140,7 @@ if st.sidebar.button("분석 실행"):
     trend = "상승" if df["close"].iloc[-1] > df["close"].iloc[-20] else "하락"
 
     # AI
-    model = genai.GenerativeModel("gemini-1.5-flash-latest")
+    model = genai.GenerativeModel("gemini-2.5-flash-latest")
 
     with st.spinner("AI 분석 중..."):
         res = model.generate_content(build_prompt(code, price, rsi, trend))
