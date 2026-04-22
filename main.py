@@ -36,19 +36,13 @@ def main():
     default_val = "삼성전자" if market == 'KR' else "AAPL"
     user_input = st.sidebar.text_input("종목명 또는 코드", value=default_val)
     
-    # API 키 입력창 (도움말 추가 및 가독성 개선)
-    st.sidebar.markdown("---")
-    api_key = st.sidebar.text_input(
-        "Google Gemini API Key", 
-        type="password", 
-        placeholder="키를 입력하고 Enter를 누르세요"
-    )
+    api_key = st.sidebar.text_input("Google Gemini API Key", type="password", placeholder="AIza...")
     st.sidebar.caption("[API 키 발급받기](https://aistudio.google.com/)")
     
     if st.sidebar.button("📊 분석 실행"):
         ticker_symbol = get_full_ticker(user_input, market, krx_dict)
         
-        with st.spinner(f'{user_input} 데이터를 분석 중...'):
+        with st.spinner('데이터를 가져오는 중...'):
             df = yf.download(ticker_symbol, period='1y', progress=False)
             if df.empty and '.KS' in ticker_symbol:
                 df = yf.download(ticker_symbol.replace('.KS', '.KQ'), period='1y', progress=False)
@@ -78,11 +72,11 @@ def main():
                     st.metric("당일 거래대금", f"{trading_val:,.1f} {val_unit}")
                     st.metric("RSI (14)", f"{latest['RSI']:.2f}")
 
-                # AI 분석 섹션 (강제 출력 로직)
+                # AI 분석 섹션
                 st.markdown("---")
                 st.write("### 🤖 AI 종합 투자 의견")
                 
-                if api_key.startswith("AIza"): # 구글 API 키는 보통 AIza로 시작합니다
+                if api_key:
                     try:
                         genai.configure(api_key=api_key)
                         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -93,17 +87,17 @@ def main():
                         RSI: {latest['RSI']:.2f}
                         20일 이평선: {latest['MA20']:.2f}
                         
-                        위 데이터를 바탕으로 향후 전망과 투자 전략(매수/보유/매도)을 한국어로 상세히 설명해줘."""
+                        위 데이터를 바탕으로 투자 의견(매수/보유/매도), 이유, 전망을 한국어로 전문성 있게 설명해줘."""
                         
-                        with st.spinner('AI 분석 리포트 생성 중...'):
+                        with st.spinner('AI 리포트 생성 중...'):
                             response = model.generate_content(prompt)
                             st.info(response.text)
                     except Exception as e:
-                        st.error(f"AI 호출 중 오류가 발생했습니다: {e}")
+                        st.error(f"AI 분석 중 오류 발생: {e}")
                 else:
-                    st.warning("⚠️ 왼쪽 사이드바에 **유효한 Gemini API Key**를 입력해 주세요. 키를 입력한 후 반드시 **Enter**를 누르고 **분석 실행** 버튼을 클릭해야 합니다.")
+                    st.warning("⚠️ 사이드바에 Gemini API Key를 입력해야 AI 의견을 볼 수 있습니다.")
             else:
-                st.error("데이터를 찾을 수 없습니다. 종목명이나 코드를 다시 확인해주세요.")
+                st.error("데이터를 불러오지 못했습니다. 종목명을 다시 확인해주세요.")
 
 if __name__ == "__main__":
     main()
