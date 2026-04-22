@@ -4,7 +4,6 @@ import pandas as pd
 import plotly.graph_objects as go
 from ta.momentum import RSIIndicator
 import google.generativeai as genai
-from datetime import datetime
 import json
 import re
 
@@ -32,7 +31,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------
-# 유틸 함수
+# JSON 파싱 안정화
 # -----------------------------
 def safe_json_parse(text):
     try:
@@ -43,7 +42,9 @@ def safe_json_parse(text):
             return json.loads(match.group(0))
     return None
 
-
+# -----------------------------
+# 환율
+# -----------------------------
 @st.cache_data(ttl=300)
 def get_exchange_rate():
     try:
@@ -56,16 +57,16 @@ def get_exchange_rate():
             return 1380.0
 
         val = df['Close'].dropna()
-
         if val.empty:
             return 1380.0
 
         return float(val.iloc[-1])
-
     except:
         return 1380.0
 
-
+# -----------------------------
+# 주가 데이터
+# -----------------------------
 @st.cache_data(ttl=300)
 def get_stock_data(ticker):
     try:
@@ -78,11 +79,25 @@ def get_stock_data(ticker):
             df.columns = df.columns.get_level_values(0)
 
         return df
-
     except:
         return pd.DataFrame()
 
+# -----------------------------
+# KRX 종목명 → 코드 변환
+# -----------------------------
+@st.cache_data(ttl=86400)
+def get_krx_list():
+    try:
+        url = "http://kind.krx.co.kr/corpoide/corpList.do?method=download"
+        df = pd.read_html(url, header=0)[0]
+        df['종목코드'] = df['종목코드'].apply(lambda x: str(x).zfill(6))
+        return dict(zip(df['회사명'], df['종목코드']))
+    except:
+        return {}
 
+# -----------------------------
+# 프롬프트
+# -----------------------------
 def build_prompt(stock, price, rate, monthly, rsi):
     return f"""
 너는 전문 주식 애널리스트다.
@@ -136,9 +151,8 @@ RSI: {rsi}
 설명 문장 절대 금지
 """
 
-
 # -----------------------------
-# API KEY (자동 적용)
+# API KEY
 # -----------------------------
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
@@ -155,16 +169,25 @@ ticker_input = st.sidebar.text_input("종목 입력", "삼성전자" if market==
 # -----------------------------
 if st.sidebar.button("분석 실행"):
 
-    ticker = ticker_input
+    ticker = ticker_input.strip()
 
+    # ✅ 한국 주식 변환
     if market == "KR":
-        if ticker.isdigit():
-            ticker = ticker + ".KS"
+        krx_dict = get_krx_list()
 
+        if ticker in krx_dict:
+            ticker = krx_dict[ticker] + ".KS"
+        elif ticker.isdigit():
+            ticker = ticker.zfill(6) + ".KS"
+        else:
+            st.error("종목명을 찾을 수 없습니다.")
+            st.stop()
+
+    # 데이터 로드
     df = get_stock_data(ticker)
 
     if df.empty:
-        st.error("데이터를 불러올 수 없습니다.")
+        st.error(f"'{ticker_input}' 데이터를 찾을 수 없습니다. (티커: {ticker})")
         st.stop()
 
     price = float(df['Close'].iloc[-1])
@@ -179,7 +202,7 @@ if st.sidebar.button("분석 실행"):
 
     rate = get_exchange_rate()
 
-    # Gemini 모델 (latest)
+    # Gemini 최신
     model = genai.GenerativeModel("gemini-1.5-flash-latest")
 
     prompt = build_prompt(ticker_input, price, rate, monthly_data, rsi)
@@ -265,5 +288,4 @@ if st.sidebar.button("분석 실행"):
 
         st.write(f"손절가: {data['strategy'].get('stop_loss', 0)}")
 
-    # 경고
     st.caption("※ 본 정보는 투자 참고용이며 투자 책임은 본인에게 있습니다.")
