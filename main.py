@@ -93,7 +93,7 @@ def main():
                         genai.configure(api_key=api_key)
                         
                         # 모델 리스트에서 확인된 정확한 모델 ID를 사용합니다.
-                        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+                        model = genai.GenerativeModel('gemini-3-flash-preview')
                         
                         prompt = f"""당신은 전문 주식 애널리스트입니다.
                         종목: {user_input} ({ticker_symbol})
