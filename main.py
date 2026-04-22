@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from ta.momentum import RSIIndicator
 import google.generativeai as genai
-import json, re
+import json, re, time
 
 # -----------------------------
 # 설정
@@ -14,24 +14,6 @@ st.set_page_config(page_title="AI 투자 분석", layout="wide")
 API_URL = "https://stock-api-qogp.onrender.com"
 
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-
-# -----------------------------
-# 스타일
-# -----------------------------
-st.markdown("""
-<style>
-.stApp { background-color: #F2F4F6; }
-.card {
-    background: white;
-    padding: 24px;
-    border-radius: 20px;
-    margin-bottom: 16px;
-}
-.buy { color: #3182F6; font-weight: 700; }
-.hold { color: #FFBB00; font-weight: 700; }
-.sell { color: #F04452; font-weight: 700; }
-</style>
-""", unsafe_allow_html=True)
 
 # -----------------------------
 # JSON 안정화
@@ -46,57 +28,60 @@ def safe_json_parse(text):
     return {}
 
 # -----------------------------
-# KRX 리스트 (검색용)
-# -----------------------------
-@st.cache_data(ttl=86400)
-def get_krx_list():
-    try:
-        df = pd.read_html("https://kind.krx.co.kr/corplist.do?method=download&searchType=13")[0]
-        df = df[['회사명','종목코드']]
-        df['종목코드'] = df['종목코드'].astype(str).str.zfill(6)
-        return df
-    except:
-        return pd.DataFrame([
-            ["삼성전자","005930"],
-            ["SK하이닉스","000660"]
-        ], columns=["회사명","종목코드"])
-
-# -----------------------------
-# API 호출
+# 🔥 핵심: 안정화된 API 호출
 # -----------------------------
 def fetch_data(market, code):
-    try:
-        if market == "KR":
-            url = f"{API_URL}/kr/{code}"
-        else:
-            url = f"{API_URL}/us/{code}"
 
-        res = requests.get(url, timeout=10).json()
+    for attempt in range(5):  # 🔥 5번 재시도 (중요)
+        try:
+            if market == "KR":
+                url = f"{API_URL}/kr/{code}"
+            else:
+                url = f"{API_URL}/us/{code}"
 
-        if not res.get("success"):
-            return pd.DataFrame()
+            res = requests.get(url, timeout=20)
 
-        df = pd.DataFrame(res["data"])
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date")
+            if res.status_code != 200:
+                time.sleep(2)
+                continue
 
-        return df
+            data = res.json()
 
-    except:
-        return pd.DataFrame()
+            if not data.get("success"):
+                time.sleep(2)
+                continue
+
+            df = pd.DataFrame(data["data"])
+
+            if df.empty:
+                time.sleep(2)
+                continue
+
+            # 컬럼 처리
+            if "close" not in df.columns:
+                df.rename(columns={"Close":"close"}, inplace=True)
+
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.set_index("date")
+
+            return df
+
+        except Exception as e:
+            time.sleep(2)
+
+    return pd.DataFrame()
 
 # -----------------------------
 # AI 프롬프트
 # -----------------------------
 def build_prompt(stock, price, monthly, rsi):
     return f"""
-너는 전문 주식 애널리스트다.
-JSON만 출력하라.
+너는 전문 주식 애널리스트다. JSON만 출력.
 
-종목: {stock}
-현재가: {price}
-RSI: {rsi}
-데이터: {monthly}
+종목:{stock}
+현재가:{price}
+RSI:{rsi}
+데이터:{monthly}
 
 {{
 "opinion":"BUY|HOLD|SELL",
@@ -117,17 +102,10 @@ st.title("📈 AI 투자 분석")
 market = st.sidebar.selectbox("시장", ["KR","US"])
 
 if market == "KR":
-    df_krx = get_krx_list()
-    keyword = st.sidebar.text_input("종목 검색")
-
-    filtered = df_krx[df_krx["회사명"].str.contains(keyword, case=False, na=False)] if keyword else df_krx
-
-    ticker_name = st.sidebar.selectbox("종목 선택", filtered["회사명"])
-
-    code = filtered[filtered["회사명"] == ticker_name]["종목코드"].values[0]
-
+    code = st.sidebar.text_input("종목코드", "005930")
+    ticker_name = code
 else:
-    code = st.sidebar.text_input("티커 입력", "AAPL")
+    code = st.sidebar.text_input("티커", "AAPL")
     ticker_name = code
 
 # -----------------------------
@@ -135,15 +113,12 @@ else:
 # -----------------------------
 if st.sidebar.button("분석 실행"):
 
-    df = fetch_data(market, code)
+    with st.spinner("데이터 불러오는 중..."):
+        df = fetch_data(market, code)
 
     if df.empty:
-        st.error("데이터 불러오기 실패 (API 서버 또는 네트워크 문제)")
+        st.error("데이터 불러오기 실패 (API 응답 지연 또는 Render 슬립)")
         st.stop()
-
-    # 컬럼 통일
-    if "close" not in df.columns:
-        df.rename(columns={"Close":"close"}, inplace=True)
 
     # RSI
     df["rsi"] = RSIIndicator(df["close"]).rsi()
@@ -162,31 +137,21 @@ if st.sidebar.button("분석 실행"):
     model = genai.GenerativeModel("gemini-1.5-flash-latest")
 
     with st.spinner("AI 분석 중..."):
-        res = model.generate_content(build_prompt(ticker_name, price, monthly_data, rsi))
+        res = model.generate_content(
+            build_prompt(ticker_name, price, monthly_data, rsi)
+        )
 
     data = safe_json_parse(res.text)
 
     # -----------------------------
     # 출력
     # -----------------------------
-    st.subheader(f"{ticker_name} ({code})")
+    st.subheader(f"{ticker_name}")
 
-    op = data.get("opinion", "HOLD").lower()
+    st.write(f"현재가: {price:,.0f}" if market=="KR" else f"${price:.2f}")
+    st.write(f"RSI: {rsi:.1f}")
 
-    st.markdown(f"""
-    <div class="card">
-        <div class="{op}">
-        {data.get("opinion","HOLD")} ({data.get("confidence",0)*100:.0f}%)
-        </div>
-        <p>{data.get("summary","")}</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric("현재가", f"{price:,.0f}원" if market=="KR" else f"${price:.2f}")
-    col2.metric("목표가", data.get("price",{}).get("target",0))
-    col3.metric("RSI", f"{rsi:.1f}")
+    st.write(data)
 
     # 차트
     fig = go.Figure()
@@ -196,26 +161,6 @@ if st.sidebar.button("분석 실행"):
         mode='lines+markers'
     ))
 
-    fig.update_layout(height=300)
     st.plotly_chart(fig, use_container_width=True)
-
-    # 상세
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("### 근거")
-        for r in data.get("reason", []):
-            st.write(f"- {r}")
-
-        st.markdown("### 리스크")
-        for r in data.get("risks", []):
-            st.write(f"- {r}")
-
-    with col2:
-        st.markdown("### 전략")
-        for b in data.get("strategy", {}).get("buy", []):
-            st.write(f"- {b.get('price')} ({b.get('ratio',0)*100:.0f}%)")
-
-        st.write(f"손절가: {data.get('strategy', {}).get('stop_loss', 0)}")
 
     st.caption("※ 투자 책임은 본인에게 있습니다.")
