@@ -10,6 +10,7 @@ st.set_page_config(page_title="AI 주식 진단 대시보드", page_icon="📈",
 
 @st.cache_data
 def get_krx_list():
+    """한국 거래소 종목 리스트 로드"""
     try:
         url = 'http://kind.krx.co.kr/corpoide/corpList.do?method=download'
         df = pd.read_html(url, header=0)[0]
@@ -18,9 +19,11 @@ def get_krx_list():
         return {}
 
 def get_full_ticker(user_input, market, krx_dict):
+    """입력값에 따른 티커 심볼 변환"""
     user_input = user_input.strip()
     if market == 'KR':
-        if user_input in krx_dict: return f"{krx_dict[user_input]}.KS"
+        if user_input in krx_dict:
+            return f"{krx_dict[user_input]}.KS"
         for name, code in krx_dict.items():
             if user_input in name: return f"{code}.KS"
         if user_input.isdigit(): return f"{user_input}.KS"
@@ -34,62 +37,87 @@ def main():
     default_val = "삼성전자" if market == 'KR' else "AAPL"
     user_input = st.sidebar.text_input("종목명 또는 코드", value=default_val)
     
-    # API 키 확인
+    # --- API 키 설정 (Secrets 우선순위) ---
     if "GEMINI_API_KEY" in st.secrets:
         api_key = st.secrets["GEMINI_API_KEY"]
         st.sidebar.success("✅ 시스템 API 키 로드 완료")
     else:
-        api_key = st.sidebar.text_input("Google Gemini API Key", type="password")
+        api_key = st.sidebar.text_input("Google Gemini API Key", type="password", placeholder="AIza... 입력 후 Enter")
+        st.sidebar.caption("[API 키 발급받기](https://aistudio.google.com/)")
     
     if st.sidebar.button("📊 분석 실행"):
         ticker_symbol = get_full_ticker(user_input, market, krx_dict)
         
-        with st.spinner('데이터 분석 중...'):
+        with st.spinner('데이터를 분석 중입니다...'):
+            # 주식 데이터 다운로드
             df = yf.download(ticker_symbol, period='1y', progress=False)
+            
+            # KOSPI 실패 시 KOSDAQ 시도
             if df.empty and '.KS' in ticker_symbol:
                 df = yf.download(ticker_symbol.replace('.KS', '.KQ'), period='1y', progress=False)
 
-            if not df.empty:
+            if df is not None and not df.empty:
+                # yfinance 멀티인덱스 대응
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
                 
+                # 지표 계산
                 df['MA20'] = df['Close'].rolling(window=20).mean()
                 df['RSI'] = RSIIndicator(close=df['Close'], window=14).rsi()
                 latest = df.iloc[-1]
                 
+                # 결과 출력
                 st.subheader(f"📈 {user_input} ({ticker_symbol}) 분석 결과")
                 col1, col2 = st.columns([2, 1])
+                
                 with col1:
                     fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
-                    fig.update_layout(xaxis_rangeslider_visible=False, height=450, template='plotly_white')
+                    fig.update_layout(xaxis_rangeslider_visible=False, height=450, template='plotly_white', margin=dict(t=10, b=10))
                     st.plotly_chart(fig, use_container_width=True)
+                
                 with col2:
+                    st.write("#### 📊 주요 데이터")
                     st.metric("현재가", f"{latest['Close']:,.0f}")
+                    
+                    val_unit = "억 원" if market == 'KR' else "USD"
+                    trading_val = (latest['Close'] * latest['Volume']) / (100000000 if market == 'KR' else 1)
+                    st.metric("당일 거래대금", f"{trading_val:,.1f} {val_unit}")
                     st.metric("RSI (14)", f"{latest['RSI']:.2f}")
 
-                # AI 분석 섹션 (에러 수정 포인트)
+                # AI 분석 섹션
                 st.markdown("---")
                 st.write("### 🤖 AI 종합 투자 의견")
                 
                 if api_key:
                     try:
                         genai.configure(api_key=api_key)
-                        # 모델명을 명확하게 지정하여 404 에러 방지
-                        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
                         
-                        prompt = f"{user_input} 주식의 현재가 {latest['Close']:.0f}, RSI {latest['RSI']:.2f}를 기반으로 투자 조언을 해줘."
-                        response = model.generate_content(prompt)
-                        st.info(response.text)
+                        # 모델 리스트에서 확인된 정확한 모델 ID를 사용합니다.
+                        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+                        
+                        prompt = f"""당신은 전문 주식 애널리스트입니다.
+                        종목: {user_input} ({ticker_symbol})
+                        현재가: {latest['Close']:.2f}
+                        RSI: {latest['RSI']:.2f}
+                        20일 이동평균선: {latest['MA20']:.2f}
+                        
+                        위 데이터를 바탕으로 투자 의견(매수/보유/매도)과 향후 전망을 한국어로 아주 상세하게 리포트 형식으로 작성해줘."""
+                        
+                        with st.spinner('Gemini AI 분석 리포트를 생성 중...'):
+                            response = model.generate_content(prompt)
+                            st.info(response.text)
                     except Exception as e:
-                        # 1.5-flash가 안될 경우 1.0-pro로 재시도 로직
+                        # Flash 모델 실패 시 Pro 모델로 재시도
                         try:
-                            model = genai.GenerativeModel(model_name='gemini-1.0-pro')
+                            model = genai.GenerativeModel('gemini-1.5-pro-latest')
                             response = model.generate_content(prompt)
                             st.info(response.text)
                         except:
-                            st.error(f"AI 호출 실패. API 키 권한이나 모델 설정을 확인해주세요: {e}")
+                            st.error(f"AI 분석 실패: 모델 로드 또는 API 권한에 문제가 있습니다. ({e})")
+                else:
+                    st.warning("⚠️ API Key가 설정되지 않았습니다. 사이드바에서 입력하거나 Secrets를 설정해주세요.")
             else:
-                st.error("데이터를 찾을 수 없습니다.")
+                st.error(f"'{user_input}'의 데이터를 불러오지 못했습니다. 종목명이나 코드가 정확한지 확인해 주세요.")
 
 if __name__ == "__main__":
     main()
