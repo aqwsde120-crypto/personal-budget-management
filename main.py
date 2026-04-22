@@ -6,14 +6,17 @@ from ta.momentum import RSIIndicator
 import google.generativeai as genai
 import json
 import re
+import time
 
 # -----------------------------
-# 기본 설정
+# 설정
 # -----------------------------
 st.set_page_config(page_title="AI 투자 분석", layout="wide")
 
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+
 # -----------------------------
-# 스타일 (토스 느낌)
+# 스타일
 # -----------------------------
 st.markdown("""
 <style>
@@ -31,7 +34,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------
-# JSON 파싱 안정화
+# JSON 안정화
 # -----------------------------
 def safe_json_parse(text):
     try:
@@ -43,47 +46,7 @@ def safe_json_parse(text):
     return None
 
 # -----------------------------
-# 환율
-# -----------------------------
-@st.cache_data(ttl=300)
-def get_exchange_rate():
-    try:
-        df = yf.download("USDKRW=X", period="5d", progress=False)
-
-        if df is None or df.empty:
-            return 1380.0
-
-        if 'Close' not in df.columns:
-            return 1380.0
-
-        val = df['Close'].dropna()
-        if val.empty:
-            return 1380.0
-
-        return float(val.iloc[-1])
-    except:
-        return 1380.0
-
-# -----------------------------
-# 주가 데이터
-# -----------------------------
-@st.cache_data(ttl=300)
-def get_stock_data(ticker):
-    try:
-        df = yf.download(ticker, period="1y", progress=False)
-
-        if df is None or df.empty:
-            return pd.DataFrame()
-
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-
-        return df
-    except:
-        return pd.DataFrame()
-
-# -----------------------------
-# KRX 종목명 → 코드 변환
+# KRX 종목 리스트
 # -----------------------------
 @st.cache_data(ttl=86400)
 def get_krx_list():
@@ -96,6 +59,54 @@ def get_krx_list():
         return {}
 
 # -----------------------------
+# yfinance 안정화
+# -----------------------------
+@st.cache_data(ttl=60)
+def get_stock_data_safe(ticker):
+    for i in range(3):
+        try:
+            df = yf.download(
+                ticker,
+                period="6mo",
+                interval="1d",
+                progress=False,
+                threads=False
+            )
+
+            if not df.empty:
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                return df
+
+        except:
+            pass
+
+        time.sleep(1)
+
+    return pd.DataFrame()
+
+# -----------------------------
+# 한국 주식 (fallback 포함)
+# -----------------------------
+def get_kr_data_safe(code):
+    df = get_stock_data_safe(code + ".KS")
+
+    if df.empty:
+        df = get_stock_data_safe(code + ".KQ")
+
+    return df
+
+# -----------------------------
+# 환율
+# -----------------------------
+@st.cache_data(ttl=300)
+def get_exchange_rate():
+    df = get_stock_data_safe("USDKRW=X")
+    if not df.empty:
+        return float(df['Close'].iloc[-1])
+    return 1380.0
+
+# -----------------------------
 # 프롬프트
 # -----------------------------
 def build_prompt(stock, price, rate, monthly, rsi):
@@ -103,14 +114,13 @@ def build_prompt(stock, price, rate, monthly, rsi):
 너는 전문 주식 애널리스트다.
 반드시 JSON만 출력하라.
 
-[데이터]
 종목: {stock}
 현재가: {price}
 환율: {rate}
 RSI: {rsi}
 6개월데이터: {monthly}
 
-[출력 형식]
+형식:
 {{
   "stock_name": "",
   "stock_code": "",
@@ -120,16 +130,11 @@ RSI: {rsi}
   "summary": "",
 
   "price": {{
-    "currency": "KRW | USD",
-    "current": 0,
-    "target": 0,
-    "upside": 0.0,
-    "current_krw": 0,
-    "target_krw": 0
+    "target": 0
   }},
 
-  "risks": ["", ""],
   "reason": ["", "", ""],
+  "risks": ["", ""],
 
   "strategy": {{
     "buy": [
@@ -138,23 +143,11 @@ RSI: {rsi}
       {{"price": 0, "ratio": 0.4}}
     ],
     "stop_loss": 0
-  }},
-
-  "technical": {{
-    "trend": "UP | DOWN | SIDEWAYS",
-    "support": 0,
-    "resistance": 0,
-    "signal": ""
   }}
 }}
 
-설명 문장 절대 금지
+설명 금지
 """
-
-# -----------------------------
-# API KEY
-# -----------------------------
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # -----------------------------
 # UI
@@ -171,23 +164,26 @@ if st.sidebar.button("분석 실행"):
 
     ticker = ticker_input.strip()
 
-    # ✅ 한국 주식 변환
+    # 한국 주식 변환
     if market == "KR":
         krx_dict = get_krx_list()
 
         if ticker in krx_dict:
-            ticker = krx_dict[ticker] + ".KS"
+            code = krx_dict[ticker]
         elif ticker.isdigit():
-            ticker = ticker.zfill(6) + ".KS"
+            code = ticker.zfill(6)
         else:
             st.error("종목명을 찾을 수 없습니다.")
             st.stop()
 
-    # 데이터 로드
-    df = get_stock_data(ticker)
+        df = get_kr_data_safe(code)
 
+    else:
+        df = get_stock_data_safe(ticker)
+
+    # 데이터 실패 처리
     if df.empty:
-        st.error(f"'{ticker_input}' 데이터를 찾을 수 없습니다. (티커: {ticker})")
+        st.error("현재 데이터 제공이 원활하지 않습니다. 잠시 후 다시 시도해주세요.")
         st.stop()
 
     price = float(df['Close'].iloc[-1])
@@ -202,7 +198,7 @@ if st.sidebar.button("분석 실행"):
 
     rate = get_exchange_rate()
 
-    # Gemini 최신
+    # AI
     model = genai.GenerativeModel("gemini-1.5-flash-latest")
 
     prompt = build_prompt(ticker_input, price, rate, monthly_data, rsi)
@@ -214,7 +210,6 @@ if st.sidebar.button("분석 실행"):
 
     # fallback
     if not data:
-        st.warning("AI 응답 오류 → 기본값 사용")
         data = {
             "opinion": "HOLD",
             "confidence": 0.5,
@@ -222,14 +217,13 @@ if st.sidebar.button("분석 실행"):
             "price": {"target": 0},
             "reason": [],
             "risks": [],
-            "strategy": {"buy": [], "stop_loss": 0},
-            "technical": {}
+            "strategy": {"buy": [], "stop_loss": 0}
         }
 
     # -----------------------------
     # UI 출력
     # -----------------------------
-    st.markdown(f"## {data.get('stock_name', ticker_input)}")
+    st.subheader(ticker_input)
 
     op = data.get("opinion", "HOLD").lower()
 
@@ -257,6 +251,7 @@ if st.sidebar.button("분석 실행"):
 
     # 차트
     st.markdown("### 📊 6개월 추이")
+
     chart_df = pd.DataFrame(monthly_data)
 
     fig = go.Figure()
