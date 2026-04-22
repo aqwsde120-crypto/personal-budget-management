@@ -8,9 +8,9 @@ import fear_and_greed
 from datetime import datetime, timedelta
 
 # 페이지 설정
-st.set_page_config(page_title="AI 주식 진단", page_icon="📈", layout="wide")
+st.set_page_config(page_title="AI Pro 주식 진단", page_icon="📈", layout="wide")
 
-# --- 토스 스타일 CSS (화이트 테마) ---
+# --- Toss Style CSS (White Theme) ---
 st.markdown("""
 <style>
     .stApp { background-color: #F2F4F6; color: #191F28; }
@@ -62,6 +62,10 @@ def get_exchange_rate():
     except: return None
 
 def main():
+    # 현재 시간 (AI 인지용)
+    now = datetime.now()
+    current_date_str = now.strftime("%Y년 %m월 %d일")
+
     st.sidebar.title("설정")
     market = st.sidebar.selectbox("시장", ["KR", "US"])
     krx_dict = get_krx_list() if market == "KR" else {}
@@ -78,7 +82,7 @@ def main():
         try:
             fg = fear_and_greed.get()
             st.metric("공포와 탐욕 지수", f"{fg.score:.0f}", fg.description)
-        except: st.metric("공포와 탐욕 지수", "-", "데이터 연결 중")
+        except: st.metric("공포와 탐욕 지수", "-", "연결 중")
         st.markdown('</div>', unsafe_allow_html=True)
         
     with col_ex:
@@ -93,14 +97,13 @@ def main():
             if ticker in krx_dict: ticker = f"{krx_dict[ticker]}.KS"
             elif ticker.isdigit(): ticker = f"{ticker}.KS"
 
-        with st.spinner('데이터 분석 중...'):
+        with st.spinner('최신 데이터를 분석 중입니다...'):
             # 최근 6개월 데이터 로드
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=180)
-            df = yf.download(ticker, start=start_date, end=end_date, progress=False)
+            start_date = now - timedelta(days=180)
+            df = yf.download(ticker, start=start_date, end=now, progress=False)
             
             if df.empty and '.KS' in ticker:
-                df = yf.download(ticker.replace('.KS', '.KQ'), start=start_date, end=end_date, progress=False)
+                df = yf.download(ticker.replace('.KS', '.KQ'), start=start_date, end=now, progress=False)
 
             if not df.empty:
                 if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
@@ -118,7 +121,7 @@ def main():
 
                 st.markdown(f"## {user_input} 분석 리포트")
                 
-                # 지표 요약
+                # 지표 요약 카드
                 m1, m2, m3 = st.columns(3)
                 with m1:
                     st.markdown('<div class="toss-card">', unsafe_allow_html=True)
@@ -134,7 +137,7 @@ def main():
                     st.metric("20일 이동평균선", ma_display)
                     st.markdown('</div>', unsafe_allow_html=True)
 
-                # --- 주가 흐름 (최근 6개월) ---
+                # 주가 흐름 차트
                 st.markdown('<div class="toss-card">', unsafe_allow_html=True)
                 st.markdown("### 📊 주가 흐름 (최근 6개월)")
                 fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
@@ -142,14 +145,33 @@ def main():
                 st.plotly_chart(fig, use_container_width=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
-                # --- AI 투자 의견 (차트 아래 배치) ---
+                # AI 투자 의견 (강력한 프롬프트 주입)
                 st.markdown('<div class="toss-card">', unsafe_allow_html=True)
                 st.markdown("### 🤖 AI 종합 투자 의견")
                 if api_key:
                     try:
                         genai.configure(api_key=api_key)
                         model = genai.GenerativeModel('gemini-3-flash-preview')
-                        prompt = f"{user_input}의 최근 6개월 주가 데이터와 현재가 {price_val}(RSI {latest['RSI']:.2f})를 바탕으로 전문적인 투자 전략을 제안해줘. 특히 현재 가격이 실제 실시간 시장가와 일치하는지 확인하며 분석해줘."
+                        
+                        # AI에게 현재 상황을 주입하는 프롬프트
+                        prompt = f"""
+                        [시스템 정보]
+                        - 현재 날짜: {current_date_str}
+                        - 종목명: {user_input} ({ticker})
+                        - 현재 가격: {price_val}
+                        - RSI(14): {latest['RSI']:.2f}
+                        - 20일 이동평균선: {ma_display}
+                        - 데이터 범위: 최근 6개월간의 실시간 시장 데이터
+
+                        [주의사항]
+                        당신은 전문 주식 애널리스트입니다. 위에서 제공한 '현재 가격'과 'RSI'가 당신이 과거에 학습한 데이터와 다르더라도, 무조건 제공된 [시스템 정보]를 '오늘의 최신 사실'로 믿고 분석하세요. 
+                        과거의 주가(예: 삼성전자 7~8만원대)를 언급하며 현재 데이터를 정정하려 하지 마세요. 
+
+                        [요청사항]
+                        위 데이터를 바탕으로 기술적 분석과 향후 투자 전략을 리포트 형식으로 작성해줘. 
+                        문체는 토스 증권처럼 친절하면서도 전문적인 한국어로 작성해줘.
+                        """
+                        
                         res = model.generate_content(prompt)
                         st.markdown(f'<div class="ai-box">{res.text}</div>', unsafe_allow_html=True)
                     except: st.info("AI 분석 기능을 일시적으로 사용할 수 없습니다.")
