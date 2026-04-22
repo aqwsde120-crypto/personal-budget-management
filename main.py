@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from ta.momentum import RSIIndicator
 import google.generativeai as genai
 import json, re
+import requests
 
 # -----------------------------
 # 설정
@@ -13,8 +14,14 @@ st.set_page_config(page_title="AI 투자 분석", layout="wide")
 
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
+# 🔥 핵심: yfinance 안정화
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "Mozilla/5.0"
+})
+
 # -----------------------------
-# 스타일 (토스 느낌)
+# 스타일
 # -----------------------------
 st.markdown("""
 <style>
@@ -33,29 +40,33 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------
-# 한국/미국 통합 데이터
+# 데이터 (재시도 포함)
 # -----------------------------
 def get_data(symbol, market):
-    try:
-        if market == "KR":
-            # 한국: .KS (코스피)
-            ticker = symbol + ".KS"
-        else:
-            ticker = symbol
+    for i in range(5):  # 🔥 재시도
+        try:
+            if market == "KR":
+                ticker = symbol + ".KS"
+            else:
+                ticker = symbol
 
-        df = yf.download(ticker, period="6mo", interval="1d", progress=False)
+            df = yf.download(
+                ticker,
+                period="6mo",
+                interval="1d",
+                progress=False,
+                session=session
+            )
 
-        if df.empty:
-            return df
+            if not df.empty:
+                df.columns = df.columns.get_level_values(0)
+                df = df.rename(columns={"Close":"close"})
+                return df
 
-        # 컬럼 정리
-        df.columns = df.columns.get_level_values(0)
-        df = df.rename(columns={"Close":"close"})
+        except:
+            pass
 
-        return df
-
-    except:
-        return pd.DataFrame()
+    return pd.DataFrame()
 
 # -----------------------------
 # JSON 안정화
@@ -105,22 +116,22 @@ st.title("📈 AI 투자 분석")
 market = st.sidebar.selectbox("시장", ["KR","US"])
 
 if market == "KR":
-    code = st.sidebar.text_input("종목코드 (예: 005930)", "005930")
+    code = st.sidebar.text_input("종목코드", "005930")
 else:
-    code = st.sidebar.text_input("티커 (예: AAPL)", "AAPL")
+    code = st.sidebar.text_input("티커", "AAPL")
 
 # -----------------------------
 # 실행
 # -----------------------------
 if st.sidebar.button("분석 실행"):
 
-    df = get_data(code, market)
+    with st.spinner("데이터 불러오는 중..."):
+        df = get_data(code, market)
 
     if df.empty:
-        st.error("데이터 불러오기 실패 (티커 확인 또는 네트워크 문제)")
+        st.error("데이터 불러오기 실패 (Yahoo Finance 차단 또는 일시 오류)")
         st.stop()
 
-    # RSI
     df["rsi"] = RSIIndicator(df["close"]).rsi()
 
     price = float(df["close"].iloc[-1])
@@ -128,7 +139,7 @@ if st.sidebar.button("분석 실행"):
 
     trend = "상승" if df["close"].iloc[-1] > df["close"].iloc[-20] else "하락"
 
-    # AI 분석
+    # AI
     model = genai.GenerativeModel("gemini-1.5-flash-latest")
 
     with st.spinner("AI 분석 중..."):
@@ -138,9 +149,6 @@ if st.sidebar.button("분석 실행"):
 
     op = data.get("opinion","HOLD").lower()
 
-    # -----------------------------
-    # 결과 카드
-    # -----------------------------
     st.markdown(f"""
     <div class="card">
         <div class="{op}">
@@ -150,34 +158,13 @@ if st.sidebar.button("분석 실행"):
     </div>
     """, unsafe_allow_html=True)
 
-    # 핵심 지표
     col1, col2, col3 = st.columns(3)
     col1.metric("현재가", f"{price:,.0f}" if market=="KR" else f"${price:.2f}")
     col2.metric("RSI", f"{rsi:.1f}")
     col3.metric("목표가", data.get("target_price",0))
 
-    # 차트
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df["close"], mode='lines'))
-    fig.update_layout(height=350)
-    st.plotly_chart(fig, use_container_width=True)
-
-    # 상세
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("### 📊 투자 근거")
-        for r in data.get("reasons", []):
-            st.write(f"- {r}")
-
-        st.markdown("### ⚠️ 리스크")
-        for r in data.get("risks", []):
-            st.write(f"- {r}")
-
-    with col2:
-        st.markdown("### 🎯 전략")
-        st.write("진입:", data.get("strategy",{}).get("entry",""))
-        st.write("손절:", data.get("strategy",{}).get("stop_loss",""))
-        st.write("익절:", data.get("strategy",{}).get("take_profit",""))
+    fig.add_trace(go.Scatter(x=df.index, y=df["close"]))
+    st.plotly_chart(fig)
 
     st.caption("※ 투자 책임은 본인에게 있습니다.")
