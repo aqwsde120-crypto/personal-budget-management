@@ -168,8 +168,21 @@ RSI: {rsi}
 # -----------------------------
 st.title("📈 AI 투자 분석")
 
+# 사이드바 상단
 market = st.sidebar.selectbox("시장", ["KR", "US"])
-ticker_input = st.sidebar.text_input("종목 입력", "삼성전자" if market=="KR" else "AAPL")
+
+if market == "KR":
+    krx_dict = get_krx_list()
+    # 회사명 리스트 (검색 편하게)
+    company_list = sorted(krx_dict.keys())
+    
+    ticker_input = st.sidebar.selectbox(
+        "종목 검색",
+        options=company_list,
+        index=company_list.index("삼성전자") if "삼성전자" in company_list else 0
+    )
+else:
+    ticker_input = st.sidebar.text_input("종목 티커 입력 (예: AAPL)", "AAPL")
 
 # -----------------------------
 # 실행
