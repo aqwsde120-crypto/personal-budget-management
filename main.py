@@ -1,6 +1,5 @@
 import streamlit as st
 import yfinance as yf
-import FinanceDataReader as fdr
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -27,74 +26,41 @@ st.markdown("""
         text-align: center;
         margin-bottom: 2rem;
     }
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        text-align: center;
-    }
     </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<h1 class="main-title">📈 AI 주식 통합 진단 대시보드</h1>', unsafe_allow_html=True)
 
+def get_full_ticker(ticker, market):
+    """시장 선택에 따라 yfinance용 티커 포맷으로 변환"""
+    if market == 'KR':
+        if ticker.isdigit():
+            return f"{ticker}.KS"
+    return ticker
 
 def get_stock_data(ticker, market='US', period='1y'):
-    """
-    주식 데이터를 가져오는 함수
-    
-    Args:
-        ticker: 종목 코드
-        market: 'US' 또는 'KR'
-        period: 데이터 기간
-    
-    Returns:
-        DataFrame: 주가 데이터
-    """
+    full_ticker = get_full_ticker(ticker, market)
     try:
-        if market == 'KR':
-            # 한국 주식: FinanceDataReader 사용
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=365)
-            df = fdr.DataReader(ticker, start_date, end_date)
-            df = df.rename(columns={
-                'Open': 'Open',
-                'High': 'High',
-                'Low': 'Low',
-                'Close': 'Close',
-                'Volume': 'Volume'
-            })
-        else:
-            # 미국 주식: yfinance 사용
-            stock = yf.Ticker(ticker)
-            df = stock.history(period=period)
+        # FinanceDataReader 대신 yfinance만 사용
+        df = yf.download(full_ticker, period=period, progress=False)
+        if df.empty and market == 'KR':
+            # .KS로 실패 시 .KQ(코스닥)로 재시도
+            full_ticker = f"{ticker}.KQ"
+            df = yf.download(full_ticker, period=period, progress=False)
         
+        # yfinance 최신 버전 멀티인덱스 대응
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
         return df
     except Exception as e:
         st.error(f"데이터 가져오기 실패: {e}")
         return None
 
-
 def get_financial_metrics(ticker, market='US'):
-    """
-    재무 지표를 가져오는 함수
-    
-    Args:
-        ticker: 종목 코드
-        market: 'US' 또는 'KR'
-    
-    Returns:
-        dict: 재무 지표 딕셔너리
-    """
+    full_ticker = get_full_ticker(ticker, market)
     try:
-        if market == 'KR':
-            # 한국 주식의 경우 제한적인 정보만 제공
-            stock = yf.Ticker(ticker + '.KS')  # KOSPI
-            if stock.info.get('regularMarketPrice') is None:
-                stock = yf.Ticker(ticker + '.KQ')  # KOSDAQ
-        else:
-            stock = yf.Ticker(ticker)
-        
+        stock = yf.Ticker(full_ticker)
         info = stock.info
         
         metrics = {
@@ -117,30 +83,10 @@ def get_financial_metrics(ticker, market='US'):
             metrics['시가총액'] = f"{metrics['시가총액']:,.0f}"
         
         return metrics
-    except Exception as e:
-        st.warning(f"재무 지표 가져오기 실패: {e}")
-        return {
-            'PER': 'N/A',
-            'PBR': 'N/A',
-            'ROE': 'N/A',
-            '배당수익률': 'N/A',
-            '시가총액': 'N/A',
-            '52주 최고가': 'N/A',
-            '52주 최저가': 'N/A',
-            '베타': 'N/A'
-        }
+    except:
+        return {k: 'N/A' for k in ['PER', 'PBR', 'ROE', '배당수익률', '시가총액', '52주 최고가', '52주 최저가', '베타']}
 
-
-def calculate_technical_indicators(df):
-    """
-    기술적 지표를 계산하는 함수
-    
-    Args:
-        df: 주가 데이터프레임
-    
-    Returns:
-        DataFrame: 기술적 지표가 추가된 데이터프레임
-    """
+def calculate_technical_indicators(df, market='US'):
     df = df.copy()
     
     # 이동평균선
@@ -159,65 +105,38 @@ def calculate_technical_indicators(df):
     df['MACD_Signal'] = macd.macd_signal()
     df['MACD_Hist'] = macd.macd_diff()
     
-    # 거래대금 (종가 * 거래량)
-    df['Trading_Value'] = df['Close'] * df['Volume']
-    
+    # 거래대금 계산 (한국 주식은 억 단위 변환 요청 반영)
+    if market == 'KR':
+        df['Trading_Value'] = (df['Close'] * df['Volume']) / 100000000
+    else:
+        df['Trading_Value'] = df['Close'] * df['Volume']
+        
     return df
 
-
 def detect_pullback(df):
-    """
-    눌림목(Pullback) 패턴을 탐지하는 함수
-    
-    눌림목 조건:
-    1. 현재가가 20일 이동평균선 상단에 위치 (20일선 위)
-    2. 현재가가 20일선에 근접 (3% 이내)
-    3. 최근 3~5일 평균 거래량이 이전 10일 평균 거래량보다 낮음 (에너지 응축)
-    
-    Args:
-        df: 기술적 지표가 계산된 데이터프레임
-    
-    Returns:
-        dict: 눌림목 분석 결과
-    """
     if len(df) < 20:
-        return {
-            'is_pullback': False,
-            'reason': '데이터 부족 (최소 20일 필요)',
-            'details': {}
-        }
+        return {'is_pullback': False, 'reason': '데이터 부족', 'details': {}}
     
-    # 최신 데이터
     latest = df.iloc[-1]
-    current_price = latest['Close']
-    ma20 = latest['MA20']
+    current_price = float(latest['Close'])
+    ma20 = float(latest['MA20'])
     
-    # 조건 1: 현재가가 20일 이평선 상단에 위치
     above_ma20 = current_price > ma20
-    
-    # 조건 2: 20일선에 근접 (3% 이내)
     distance_from_ma20 = ((current_price - ma20) / ma20) * 100
     near_ma20 = 0 <= distance_from_ma20 <= 3
     
-    # 조건 3: 거래량 분석 (에너지 응축)
-    # 최근 3~5일 평균 거래량
-    recent_volume = df['Volume'].iloc[-5:-1].mean()  # 최근 5일 중 4일
-    # 이전 10일 평균 거래량 (상승장 거래량)
-    previous_volume = df['Volume'].iloc[-15:-5].mean()  # 6~15일 전
-    
+    recent_volume = df['Volume'].iloc[-5:-1].mean()
+    previous_volume = df['Volume'].iloc[-15:-5].mean()
     volume_decreasing = recent_volume < previous_volume
-    volume_ratio = (recent_volume / previous_volume) * 100 if previous_volume > 0 else 100
     
-    # 종합 판단
     is_pullback = above_ma20 and near_ma20 and volume_decreasing
     
     details = {
-        '현재가': f"{current_price:.2f}",
-        '20일선': f"{ma20:.2f}",
+        '현재가': f"{current_price:,.2f}",
+        '20일선': f"{ma20:,.2f}",
         '20일선 대비 거리': f"{distance_from_ma20:.2f}%",
         '최근5일 평균거래량': f"{recent_volume:,.0f}",
         '이전10일 평균거래량': f"{previous_volume:,.0f}",
-        '거래량 비율': f"{volume_ratio:.1f}%",
         '20일선 상단': '✓' if above_ma20 else '✗',
         '20일선 근접(3%이내)': '✓' if near_ma20 else '✗',
         '거래량 감소': '✓' if volume_decreasing else '✗'
@@ -233,178 +152,44 @@ def detect_pullback(df):
         reason = "거래량이 감소하지 않아 에너지 응축 신호가 없습니다."
     else:
         reason = "눌림목 조건을 충족하지 않습니다."
-    
-    return {
-        'is_pullback': is_pullback,
-        'reason': reason,
-        'details': details
-    }
-
+        
+    return {'is_pullback': is_pullback, 'reason': reason, 'details': details}
 
 def get_macro_indicators():
-    """
-    거시 경제 지표를 가져오는 함수
-    
-    지표:
-    - 미국 10년물 국채 금리 (^TNX)
-    - 원/달러 환율 (KRW=X)
-    
-    Returns:
-        dict: 거시 경제 지표
-    """
     try:
-        # 미국 10년물 국채 금리
-        tnx = yf.Ticker("^TNX")
-        tnx_data = tnx.history(period='5d')
-        current_yield = tnx_data['Close'].iloc[-1] if len(tnx_data) > 0 else None
-        prev_yield = tnx_data['Close'].iloc[-2] if len(tnx_data) > 1 else None
+        tnx = yf.download("^TNX", period='5d', progress=False)['Close']
+        krw = yf.download("KRW=X", period='5d', progress=False)['Close']
         
-        # 원/달러 환율
-        krw = yf.Ticker("KRW=X")
-        krw_data = krw.history(period='5d')
-        current_krw = krw_data['Close'].iloc[-1] if len(krw_data) > 0 else None
-        prev_krw = krw_data['Close'].iloc[-2] if len(krw_data) > 1 else None
-        
-        # 변화율 계산
-        yield_change = ((current_yield - prev_yield) / prev_yield * 100) if prev_yield else 0
-        krw_change = ((current_krw - prev_krw) / prev_krw * 100) if prev_krw else 0
-        
-        return {
-            '미국10년물금리': {
-                '현재': f"{current_yield:.2f}%" if current_yield else 'N/A',
-                '변화': f"{yield_change:+.2f}%" if current_yield else 'N/A'
-            },
-            '원달러환율': {
-                '현재': f"{current_krw:.2f}" if current_krw else 'N/A',
-                '변화': f"{krw_change:+.2f}%" if current_krw else 'N/A'
-            }
-        }
-    except Exception as e:
-        st.warning(f"거시 지표 가져오기 실패: {e}")
-        return {
-            '미국10년물금리': {'현재': 'N/A', '변화': 'N/A'},
-            '원달러환율': {'현재': 'N/A', '변화': 'N/A'}
-        }
+        if isinstance(tnx, pd.DataFrame): tnx = tnx.iloc[:, 0]
+        if isinstance(krw, pd.DataFrame): krw = krw.iloc[:, 0]
 
+        return {
+            '미국10년물금리': {'현재': f"{tnx.iloc[-1]:.2f}%", '변화': f"{((tnx.iloc[-1]-tnx.iloc[-2])/tnx.iloc[-2]*100):+.2f}%"},
+            '원달러환율': {'현재': f"{krw.iloc[-1]:,.2f}", '변화': f"{((krw.iloc[-1]-krw.iloc[-2])/krw.iloc[-2]*100):+.2f}%"}
+        }
+    except:
+        return {'미국10년물금리': {'현재': 'N/A', '변화': 'N/A'}, '원달러환율': {'현재': 'N/A', '변화': 'N/A'}}
 
 def create_candlestick_chart(df):
-    """
-    Plotly를 사용한 인터랙티브 캔들스틱 차트 생성
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price'), row=1, col=1)
     
-    Args:
-        df: 기술적 지표가 포함된 데이터프레임
+    for ma, color in zip(['MA5', 'MA20', 'MA60', 'MA120'], ['#FF6B6B', '#4ECDC4', '#FFD93D', '#95E1D3']):
+        fig.add_trace(go.Scatter(x=df.index, y=df[ma], name=ma, line=dict(color=color, width=1.5)), row=1, col=1)
+        
+    colors = ['#FF6B6B' if df['Close'].iloc[i] >= df['Open'].iloc[i] else '#4ECDC4' for i in range(len(df))]
+    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='Volume', marker_color=colors, opacity=0.5), row=2, col=1)
     
-    Returns:
-        plotly figure
-    """
-    # 서브플롯 생성 (차트 2개: 가격/거래량)
-    fig = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.03,
-        subplot_titles=('주가 및 이동평균선', '거래량'),
-        row_heights=[0.7, 0.3]
-    )
-    
-    # 캔들스틱
-    fig.add_trace(
-        go.Candlestick(
-            x=df.index,
-            open=df['Open'],
-            high=df['High'],
-            low=df['Low'],
-            close=df['Close'],
-            name='주가',
-            increasing_line_color='#FF6B6B',
-            decreasing_line_color='#4ECDC4'
-        ),
-        row=1, col=1
-    )
-    
-    # 이동평균선들
-    ma_colors = {
-        'MA5': '#FF6B6B',
-        'MA20': '#4ECDC4',
-        'MA60': '#FFD93D',
-        'MA120': '#95E1D3'
-    }
-    
-    for ma, color in ma_colors.items():
-        fig.add_trace(
-            go.Scatter(
-                x=df.index,
-                y=df[ma],
-                name=ma,
-                line=dict(color=color, width=2),
-                opacity=0.7
-            ),
-            row=1, col=1
-        )
-    
-    # 거래량
-    colors = ['#FF6B6B' if df['Close'].iloc[i] >= df['Open'].iloc[i] else '#4ECDC4' 
-              for i in range(len(df))]
-    
-    fig.add_trace(
-        go.Bar(
-            x=df.index,
-            y=df['Volume'],
-            name='거래량',
-            marker_color=colors,
-            opacity=0.5
-        ),
-        row=2, col=1
-    )
-    
-    # 레이아웃 설정
-    fig.update_layout(
-        title='주가 차트 분석',
-        yaxis_title='주가',
-        yaxis2_title='거래량',
-        xaxis_rangeslider_visible=False,
-        height=700,
-        hovermode='x unified',
-        template='plotly_white'
-    )
-    
+    fig.update_layout(height=600, template='plotly_white', xaxis_rangeslider_visible=False)
     return fig
 
-
-def generate_ai_analysis(ticker, financial_metrics, pullback_info, df, macro_indicators, api_key):
-    """
-    Claude API를 사용하여 AI 종합 분석 리포트 생성
-    
-    Args:
-        ticker: 종목 코드
-        financial_metrics: 재무 지표
-        pullback_info: 눌림목 분석 결과
-        df: 기술적 지표가 포함된 데이터프레임
-        macro_indicators: 거시 경제 지표
-        api_key: Anthropic API 키
-    
-    Returns:
-        str: AI 분석 리포트
-    """
-    # 최신 데이터
+def generate_ai_analysis(ticker, financial_metrics, pullback_info, df, macro_indicators, api_key, market='US'):
     latest = df.iloc[-1]
     
-    # 기술적 지표 요약
-    technical_summary = f"""
-    [기술적 지표]
-    - 현재가: {latest['Close']:.2f}
-    - RSI(14): {latest['RSI']:.2f}
-    - MACD: {latest['MACD']:.2f}
-    - MACD Signal: {latest['MACD_Signal']:.2f}
-    - 당일 거래대금: {latest['Trading_Value']:,.0f}
-    - MA5: {latest['MA5']:.2f}
-    - MA20: {latest['MA20']:.2f}
-    - MA60: {latest['MA60']:.2f}
-    - MA120: {latest['MA120']:.2f}
-    """
+    # 한국과 미국 시장의 거래대금 단위 텍스트 다원화
+    tv_unit = "억 원" if market == 'KR' else "USD"
     
-    # 프롬프트 구성
-    prompt = f"""
-당신은 전문 금융 애널리스트입니다. 다음 정보를 바탕으로 '{ticker}' 종목에 대한 종합 투자 의견을 제시해주세요.
+    prompt = f"""당신은 전문 금융 애널리스트입니다. 다음 정보를 바탕으로 '{ticker}' 종목에 대한 종합 투자 의견을 제시해주세요.
 
 ## 1. 재무 지표
 {chr(10).join([f'- {k}: {v}' for k, v in financial_metrics.items()])}
@@ -416,7 +201,13 @@ def generate_ai_analysis(ticker, financial_metrics, pullback_info, df, macro_ind
 {chr(10).join([f'  - {k}: {v}' for k, v in pullback_info['details'].items()])}
 
 ## 3. 기술적 지표
-{technical_summary}
+- 현재가: {latest['Close']:.2f}
+- RSI(14): {latest['RSI']:.2f}
+- MACD: {latest['MACD']:.2f}
+- 당일 거래대금: {latest['Trading_Value']:,.2f} {tv_unit}
+- MA5: {latest['MA5']:.2f}
+- MA20: {latest['MA20']:.2f}
+- MA60: {latest['MA60']:.2f}
 
 ## 4. 거시 경제 환경
 - 미국 10년물 국채 금리: {macro_indicators['미국10년물금리']['현재']} ({macro_indicators['미국10년물금리']['변화']})
@@ -431,191 +222,90 @@ def generate_ai_analysis(ticker, financial_metrics, pullback_info, df, macro_ind
 4. **거시 환경 영향**: 금리와 환율이 해당 종목에 미치는 영향 (2-3문장)
 5. **위험 요소**: 주의해야 할 리스크 (2-3문장)
 6. **목표가 및 손절가**: 구체적인 가격대 제시
-
-전문적이지만 이해하기 쉽게 작성해주세요.
 """
-    
     try:
         client = anthropic.Anthropic(api_key=api_key)
-        
+        # 안정성이 검증된 Claude 3.5 Sonnet 최신 모델명으로 수정
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2000,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
+            model="claude-3-5-sonnet-20240620",
+            max_tokens=1500,
+            messages=[{"role": "user", "content": prompt}]
         )
-        
         return message.content[0].text
     except Exception as e:
-        return f"AI 분석 생성 실패: {str(e)}\n\n[참고] Anthropic API 키를 확인해주세요."
+        return f"AI 분석 실패: {e}\n[참고] Anthropic API 키나 결제 계정 상태를 확인해 주세요."
 
-
-# 메인 앱
 def main():
-    # 사이드바 설정
     st.sidebar.header("🔧 설정")
+    market = st.sidebar.selectbox("시장 선택", ["KR", "US"])
+    ticker = st.sidebar.text_input("종목 코드 입력", value="005930" if market=="KR" else "AAPL")
+    api_key = st.sidebar.text_input("Anthropic API Key", type="password")
     
-    # 시장 선택
-    market = st.sidebar.selectbox(
-        "시장 선택",
-        ["US", "KR"],
-        help="US: 미국 주식, KR: 한국 주식"
-    )
-    
-    # 종목 코드 입력
-    if market == "KR":
-        ticker = st.sidebar.text_input(
-            "종목 코드 입력",
-            value="005930",
-            help="예: 삼성전자 = 005930"
-        )
-    else:
-        ticker = st.sidebar.text_input(
-            "종목 코드 입력",
-            value="AAPL",
-            help="예: Apple = AAPL"
-        )
-    
-    # API 키 입력
-    api_key = st.sidebar.text_input(
-        "Anthropic API Key",
-        type="password",
-        help="Claude API를 사용하기 위한 키"
-    )
-    
-    # 분석 실행 버튼
-    analyze_button = st.sidebar.button("📊 분석 실행", type="primary", use_container_width=True)
-    
-    if analyze_button and ticker:
-        with st.spinner('데이터를 가져오는 중...'):
-            # 1. 주가 데이터 가져오기
-            df = get_stock_data(ticker, market)
+    if st.sidebar.button("📊 분석 실행"):
+        df = get_stock_data(ticker, market)
+        if df is not None and not df.empty:
+            df = calculate_technical_indicators(df, market=market)
+            metrics = get_financial_metrics(ticker, market)
+            pullback = detect_pullback(df)
+            macro = get_macro_indicators()
             
-            if df is None or len(df) == 0:
-                st.error("데이터를 가져올 수 없습니다. 종목 코드를 확인해주세요.")
-                return
+            # 상단: 재무 지표
+            st.subheader("📊 주요 재무 지표")
+            c1, c2, c3, c4 = st.columns(4)
+            metrics_items = list(metrics.items())
             
-            # 2. 재무 지표 가져오기
-            financial_metrics = get_financial_metrics(ticker, market)
+            for idx, (key, value) in enumerate(metrics_items[:4]):
+                with [c1, c2, c3, c4][idx]:
+                    st.metric(label=key, value=value)
             
-            # 3. 기술적 지표 계산
-            df = calculate_technical_indicators(df)
-            
-            # 4. 눌림목 분석
-            pullback_info = detect_pullback(df)
-            
-            # 5. 거시 경제 지표
-            macro_indicators = get_macro_indicators()
-        
-        # === UI 렌더링 ===
-        
-        # 상단: 재무 지표
-        st.subheader("📊 주요 재무 지표")
-        
-        cols = st.columns(4)
-        metrics_items = list(financial_metrics.items())
-        
-        for idx, (key, value) in enumerate(metrics_items[:4]):
-            with cols[idx % 4]:
-                st.metric(label=key, value=value)
-        
-        cols2 = st.columns(4)
-        for idx, (key, value) in enumerate(metrics_items[4:]):
-            with cols2[idx % 4]:
-                st.metric(label=key, value=value)
-        
-        st.divider()
-        
-        # 중단: 차트 및 눌림목 분석
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.subheader("📈 주가 차트")
-            fig = create_candlestick_chart(df)
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            st.subheader("🎯 눌림목 분석")
-            
-            if pullback_info['is_pullback']:
-                st.success(pullback_info['reason'])
-            else:
-                st.info(pullback_info['reason'])
-            
-            st.write("**세부 분석**")
-            for key, value in pullback_info['details'].items():
-                st.text(f"{key}: {value}")
-            
+            c5, c6, c7, c8 = st.columns(4)
+            for idx, (key, value) in enumerate(metrics_items[4:]):
+                with [c5, c6, c7, c8][idx]:
+                    st.metric(label=key, value=value)
+                    
             st.divider()
             
-            st.subheader("🌍 거시 경제 지표")
-            st.metric(
-                "미국 10년물 금리",
-                macro_indicators['미국10년물금리']['현재'],
-                macro_indicators['미국10년물금리']['변화']
-            )
-            st.metric(
-                "원/달러 환율",
-                macro_indicators['원달러환율']['현재'],
-                macro_indicators['원달러환율']['변화']
-            )
-        
-        st.divider()
-        
-        # 하단: AI 분석 리포트
-        st.subheader("🤖 AI 종합 투자 분석")
-        
-        if api_key:
-            with st.spinner('AI 분석을 생성하는 중...'):
-                analysis = generate_ai_analysis(
-                    ticker,
-                    financial_metrics,
-                    pullback_info,
-                    df,
-                    macro_indicators,
-                    api_key
-                )
+            # 중단: 차트 및 눌림목 분석
+            col_chart, col_side = st.columns([2, 1])
+            with col_chart:
+                st.subheader("📈 주가 차트")
+                st.plotly_chart(create_candlestick_chart(df), use_container_width=True)
+            with col_side:
+                st.subheader("🎯 패턴 및 지표 분석")
+                
+                if pullback['is_pullback']:
+                    st.success(pullback['reason'])
+                else:
+                    st.info(pullback['reason'])
+                    
+                st.write("**세부 분석**")
+                for key, value in pullback['details'].items():
+                    st.text(f"{key}: {value}")
+                    
+                st.divider()
+                
+                # 거래대금 표시 (한국 시장 '억 원' 단위)
+                tv_unit = "억 원" if market == 'KR' else "USD"
+                st.metric("당일 거래대금", f"{df.iloc[-1]['Trading_Value']:,.1f} {tv_unit}")
+                
+                st.divider()
+                st.subheader("🌍 거시 경제 지표")
+                st.metric("미국 10년 금리", macro['미국10년물금리']['현재'], macro['미국10년물금리']['변화'])
+                st.metric("원달러 환율", macro['원달러환율']['현재'], macro['원달러환율']['변화'])
+                
+            st.divider()
             
-            st.markdown(analysis)
+            # 하단: AI 분석
+            if api_key:
+                st.subheader("🤖 AI 종합 투자 의견")
+                with st.spinner('AI 분석을 생성하는 중...'):
+                    st.write(generate_ai_analysis(ticker, metrics, pullback, df, macro, api_key, market=market))
+            else:
+                st.warning("⚠️ Anthropic API 키를 입력하면 AI 분석을 확인할 수 있습니다.")
         else:
-            st.warning("⚠️ Anthropic API 키를 입력하면 AI 분석을 확인할 수 있습니다.")
-            st.info("""
-            **AI 분석 기능 안내**
-            
-            왼쪽 사이드바에 Anthropic API 키를 입력하면 Claude AI가 다음 항목을 종합 분석합니다:
-            - 재무 지표 분석
-            - 눌림목 패턴 해석
-            - 기술적 지표 종합
-            - 거시 경제 환경 영향
-            - 투자 의견 (매수/매도/보유)
-            - 목표가 및 손절가 제시
-            
-            API 키는 https://console.anthropic.com 에서 발급받을 수 있습니다.
-            """)
-    
+            st.error("종목 데이터를 불러오지 못했습니다. 종목 코드와 시장 선택을 확인해 주세요.")
     else:
-        # 초기 화면
         st.info("👈 왼쪽 사이드바에서 종목을 선택하고 '분석 실행' 버튼을 클릭하세요.")
-        
-        st.markdown("""
-        ### 📌 주요 기능
-        
-        1. **재무 지표 분석**: PER, PBR, ROE 등 핵심 재무 수치 제공
-        2. **눌림목 탐색**: 20일 이평선 근처에서 에너지 응축 패턴 감지
-        3. **기술적 지표**: 이동평균선, RSI, MACD 등 차트 분석
-        4. **거시 경제 연동**: 미국 금리와 환율 동향 파악
-        5. **AI 투자 의견**: Claude AI의 종합 분석 및 투자 전략 제시
-        
-        ### 🎯 눌림목(Pullback) 판별 기준
-        
-        - ✅ 주가가 20일 이동평균선 **상단**에 위치
-        - ✅ 20일선과의 거리가 **3% 이내**로 근접
-        - ✅ 최근 거래량이 **감소** (에너지 응축 신호)
-        
-        → 위 3가지 조건을 모두 충족하면 눌림목으로 판단합니다.
-        """)
-
 
 if __name__ == "__main__":
     main()
