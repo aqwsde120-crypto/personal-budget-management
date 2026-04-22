@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 from ta.momentum import RSIIndicator
-import google.generativeai as genai  # 이 부분이 반드시 있어야 합니다!
+import google.generativeai as genai
 
 # 페이지 설정
 st.set_page_config(page_title="AI 주식 진단 대시보드", page_icon="📈", layout="wide")
@@ -36,9 +36,15 @@ def main():
     default_val = "삼성전자" if market == 'KR' else "AAPL"
     user_input = st.sidebar.text_input("종목명 또는 코드", value=default_val)
     
-    # API 키 입력 및 Enter 유도
-    api_key = st.sidebar.text_input("Google Gemini API Key", type="password", placeholder="AIza... 입력 후 Enter")
-    st.sidebar.caption("[API 키 발급받기](https://aistudio.google.com/)")
+    # --- API 키 자동 설정 로직 ---
+    if "GEMINI_API_KEY" in st.secrets:
+        # Secrets에 저장되어 있으면 자동으로 사용
+        api_key = st.secrets["GEMINI_API_KEY"]
+        st.sidebar.success("✅ 시스템 API 키를 사용 중입니다.")
+    else:
+        # Secrets에 없으면 기존처럼 직접 입력 받음
+        api_key = st.sidebar.text_input("Google Gemini API Key", type="password", placeholder="AIza... 입력 후 Enter")
+        st.sidebar.caption("[API 키 발급받기](https://aistudio.google.com/)")
     
     if st.sidebar.button("📊 분석 실행"):
         ticker_symbol = get_full_ticker(user_input, market, krx_dict)
@@ -55,12 +61,12 @@ def main():
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
                 
-                # 기술적 지표
+                # 기술적 지표 계산
                 df['MA20'] = df['Close'].rolling(window=20).mean()
                 df['RSI'] = RSIIndicator(close=df['Close'], window=14).rsi()
                 latest = df.iloc[-1]
                 
-                # 결과 레이아웃
+                # 결과 레이아웃 출력
                 st.subheader(f"📈 {user_input} ({ticker_symbol}) 분석 결과")
                 col1, col2 = st.columns([2, 1])
                 
@@ -84,7 +90,6 @@ def main():
                 
                 if api_key:
                     try:
-                        # genai를 직접 사용하기 전 설정을 확인합니다.
                         genai.configure(api_key=api_key)
                         model = genai.GenerativeModel('gemini-1.5-flash')
                         
@@ -102,7 +107,7 @@ def main():
                     except Exception as e:
                         st.error(f"AI 호출 에러: {e}")
                 else:
-                    st.warning("⚠️ 사이드바에 Gemini API Key를 입력해야 AI 리포트를 볼 수 있습니다.")
+                    st.warning("⚠️ API Key가 설정되지 않았습니다. 사이드바에서 입력하거나 Secrets를 설정해주세요.")
             else:
                 st.error(f"'{user_input}'의 데이터를 불러오지 못했습니다. 종목명이나 코드가 정확한지 확인해 주세요.")
 
