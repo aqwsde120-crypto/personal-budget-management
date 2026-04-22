@@ -49,14 +49,28 @@ def safe_json_parse(text):
 # KRX 종목 리스트
 # -----------------------------
 @st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400)
 def get_krx_list():
     try:
-        url = "http://kind.krx.co.kr/corpoide/corpList.do?method=download"
+        # 방법 1: 가장 안정적인 최신 URL (2025~2026 기준)
+        url = "https://kind.krx.co.kr/corplist.do?method=download&searchType=13"
         df = pd.read_html(url, header=0)[0]
-        df['종목코드'] = df['종목코드'].apply(lambda x: str(x).zfill(6))
+        
+        df = df[['회사명', '종목코드']].copy()
+        df['종목코드'] = df['종목코드'].astype(str).str.zfill(6)
         return dict(zip(df['회사명'], df['종목코드']))
-    except:
-        return {}
+        
+    except Exception as e:
+        st.warning(f"KRX 리스트 로드 실패: {str(e)[:100]}... 대체 리스트 사용")
+        
+        # 방법 2: 실패 시 대체 (상위 종목만이라도)
+        fallback = {
+            "삼성전자": "005930", "SK하이닉스": "000660", "LG에너지솔루션": "373220",
+            "삼성바이오로직스": "207940", "현대차": "005380", "카카오": "035720",
+            "네이버": "035420", "삼성전자우": "005935", "POSCO홀딩스": "005490",
+            # 자주 쓰는 종목 30~50개 정도 미리 넣어두는 게 좋음
+        }
+        return fallback
 
 # -----------------------------
 # yfinance 안정화
