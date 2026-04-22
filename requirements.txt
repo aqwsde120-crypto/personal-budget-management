@@ -3,6 +3,5 @@ yfinance
 pandas
 numpy
 plotly
-anthropic
+google-generativeai
 ta
-requests
