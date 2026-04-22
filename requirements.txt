@@ -1,10 +1,8 @@
 streamlit
 yfinance
-FinanceDataReader
 pandas
 numpy
 plotly
 anthropic
 ta
 requests
-lxml==4.9.4
