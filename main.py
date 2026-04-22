@@ -88,37 +88,76 @@ def get_financial_metrics(ticker, market='US'):
     """
     try:
         if market == 'KR':
-            # 한국 주식의 경우 제한적인 정보만 제공
-            stock = yf.Ticker(ticker + '.KS')  # KOSPI
-            if stock.info.get('regularMarketPrice') is None:
-                stock = yf.Ticker(ticker + '.KQ')  # KOSDAQ
+            # 한국 주식의 경우 KS/KQ 자동 판별
+            stock = None
+            for suffix in ['.KS', '.KQ']:
+                try:
+                    temp_stock = yf.Ticker(ticker + suffix)
+                    # info를 가져와서 유효한지 확인
+                    test_info = temp_stock.info
+                    if test_info and test_info.get('regularMarketPrice'):
+                        stock = temp_stock
+                        break
+                except:
+                    continue
+            
+            if stock is None:
+                # 접미사 없이 시도
+                stock = yf.Ticker(ticker)
         else:
             stock = yf.Ticker(ticker)
         
-        info = stock.info
+        # info 가져오기 시도
+        try:
+            info = stock.info
+        except Exception as e:
+            st.warning(f"재무 정보 로딩 중 오류: {e}")
+            info = {}
+        
+        # 안전하게 값 가져오기
+        def safe_get(key, default='N/A'):
+            try:
+                value = info.get(key, default)
+                return value if value is not None else default
+            except:
+                return default
         
         metrics = {
-            'PER': info.get('trailingPE', 'N/A'),
-            'PBR': info.get('priceToBook', 'N/A'),
-            'ROE': info.get('returnOnEquity', 'N/A'),
-            '배당수익률': info.get('dividendYield', 'N/A'),
-            '시가총액': info.get('marketCap', 'N/A'),
-            '52주 최고가': info.get('fiftyTwoWeekHigh', 'N/A'),
-            '52주 최저가': info.get('fiftyTwoWeekLow', 'N/A'),
-            '베타': info.get('beta', 'N/A')
+            'PER': safe_get('trailingPE'),
+            'PBR': safe_get('priceToBook'),
+            'ROE': safe_get('returnOnEquity'),
+            '배당수익률': safe_get('dividendYield'),
+            '시가총액': safe_get('marketCap'),
+            '52주 최고가': safe_get('fiftyTwoWeekHigh'),
+            '52주 최저가': safe_get('fiftyTwoWeekLow'),
+            '베타': safe_get('beta')
         }
         
         # 포맷팅
-        if isinstance(metrics['ROE'], (int, float)):
-            metrics['ROE'] = f"{metrics['ROE']*100:.2f}%"
-        if isinstance(metrics['배당수익률'], (int, float)):
-            metrics['배당수익률'] = f"{metrics['배당수익률']*100:.2f}%"
-        if isinstance(metrics['시가총액'], (int, float)):
-            metrics['시가총액'] = f"{metrics['시가총액']:,.0f}"
+        try:
+            if isinstance(metrics['PER'], (int, float)):
+                metrics['PER'] = f"{metrics['PER']:.2f}"
+            if isinstance(metrics['PBR'], (int, float)):
+                metrics['PBR'] = f"{metrics['PBR']:.2f}"
+            if isinstance(metrics['ROE'], (int, float)):
+                metrics['ROE'] = f"{metrics['ROE']*100:.2f}%"
+            if isinstance(metrics['배당수익률'], (int, float)):
+                metrics['배당수익률'] = f"{metrics['배당수익률']*100:.2f}%"
+            if isinstance(metrics['시가총액'], (int, float)):
+                metrics['시가총액'] = f"${metrics['시가총액']/1e9:.2f}B" if market == 'US' else f"₩{metrics['시가총액']/1e12:.2f}조"
+            if isinstance(metrics['52주 최고가'], (int, float)):
+                metrics['52주 최고가'] = f"{metrics['52주 최고가']:.2f}"
+            if isinstance(metrics['52주 최저가'], (int, float)):
+                metrics['52주 최저가'] = f"{metrics['52주 최저가']:.2f}"
+            if isinstance(metrics['베타'], (int, float)):
+                metrics['베타'] = f"{metrics['베타']:.2f}"
+        except Exception as e:
+            # 포맷팅 실패해도 계속 진행
+            pass
         
         return metrics
     except Exception as e:
-        st.warning(f"재무 지표 가져오기 실패: {e}")
+        st.warning(f"재무 지표를 가져올 수 없습니다: {e}")
         return {
             'PER': 'N/A',
             'PBR': 'N/A',
@@ -439,8 +478,8 @@ def generate_ai_analysis(ticker, financial_metrics, pullback_info, df, macro_ind
         # Gemini API 설정
         genai.configure(api_key=api_key)
         
-        # Gemini 1.5 Flash 모델 사용 (무료, 빠름)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Gemini Pro 모델 사용 (무료, 안정적)
+        model = genai.GenerativeModel('gemini-pro')
         
         # 응답 생성
         response = model.generate_content(prompt)
@@ -476,9 +515,12 @@ def main():
             help="예: Apple = AAPL"
         )
     
-    # API 키 입력
+    # API 키 입력 - secrets 파일 또는 기본값 사용
+    default_api_key = st.secrets.get("GOOGLE_API_KEY", "AIzaSyCosexnKOcAanGf_pSx8ZzhOHi6_hFByV0")
+    
     api_key = st.sidebar.text_input(
         "Google AI Studio API Key",
+        value=default_api_key,
         type="password",
         help="Gemini API를 사용하기 위한 키 (무료)"
     )

@@ -52,6 +52,31 @@ pip install -r requirements.txt
 > ✅ **완전 무료**로 사용 가능합니다!  
 > 일일 할당량: 1,500 requests/day (개인 사용 충분)
 
+### 4. API 키 설정 (자동 입력)
+
+**방법 1: secrets.toml 파일 사용 (권장)**
+```bash
+# 프로젝트 폴더에 .streamlit 디렉토리 생성
+mkdir .streamlit
+
+# secrets.toml 파일 생성 및 편집
+nano .streamlit/secrets.toml
+```
+
+`.streamlit/secrets.toml` 파일 내용:
+```toml
+GOOGLE_API_KEY = "여기에_발급받은_API_키_입력"
+```
+
+**방법 2: 코드에 직접 입력**
+`main.py` 파일의 104번째 줄을 수정:
+```python
+default_api_key = st.secrets.get("GOOGLE_API_KEY", "여기에_발급받은_API_키_입력")
+```
+
+> ⚠️ **보안 주의**: secrets.toml 파일은 절대 Git에 커밋하지 마세요!  
+> `.gitignore` 파일에 이미 추가되어 있습니다.
+
 ## 💻 실행 방법
 
 ```bash
