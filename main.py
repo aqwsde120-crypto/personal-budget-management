@@ -32,7 +32,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------
-# 유틸
+# 유틸 함수
 # -----------------------------
 def safe_json_parse(text):
     try:
@@ -46,18 +46,41 @@ def safe_json_parse(text):
 
 @st.cache_data(ttl=300)
 def get_exchange_rate():
-    df = yf.download("USDKRW=X", period="5d", progress=False)
-    if not df.empty:
-        return float(df['Close'].iloc[-1])
-    return 1380.0
+    try:
+        df = yf.download("USDKRW=X", period="5d", progress=False)
+
+        if df is None or df.empty:
+            return 1380.0
+
+        if 'Close' not in df.columns:
+            return 1380.0
+
+        val = df['Close'].dropna()
+
+        if val.empty:
+            return 1380.0
+
+        return float(val.iloc[-1])
+
+    except:
+        return 1380.0
 
 
 @st.cache_data(ttl=300)
 def get_stock_data(ticker):
-    df = yf.download(ticker, period="1y", progress=False)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    return df
+    try:
+        df = yf.download(ticker, period="1y", progress=False)
+
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
+        return df
+
+    except:
+        return pd.DataFrame()
 
 
 def build_prompt(stock, price, rate, monthly, rsi):
@@ -115,6 +138,11 @@ RSI: {rsi}
 
 
 # -----------------------------
+# API KEY (자동 적용)
+# -----------------------------
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+
+# -----------------------------
 # UI
 # -----------------------------
 st.title("📈 AI 투자 분석")
@@ -122,29 +150,21 @@ st.title("📈 AI 투자 분석")
 market = st.sidebar.selectbox("시장", ["KR", "US"])
 ticker_input = st.sidebar.text_input("종목 입력", "삼성전자" if market=="KR" else "AAPL")
 
-api_key = st.sidebar.text_input("Gemini API Key", type="password")
-
+# -----------------------------
+# 실행
+# -----------------------------
 if st.sidebar.button("분석 실행"):
 
-    if not api_key:
-        st.warning("API Key 필요")
-        st.stop()
-
-    # -----------------------------
-    # 티커 처리
-    # -----------------------------
     ticker = ticker_input
+
     if market == "KR":
         if ticker.isdigit():
             ticker = ticker + ".KS"
 
-    # -----------------------------
-    # 데이터 수집
-    # -----------------------------
     df = get_stock_data(ticker)
 
     if df.empty:
-        st.error("데이터 없음")
+        st.error("데이터를 불러올 수 없습니다.")
         st.stop()
 
     price = float(df['Close'].iloc[-1])
@@ -155,15 +175,12 @@ if st.sidebar.button("분석 실행"):
 
     # 6개월 데이터
     monthly = df['Close'].resample('ME').last().tail(6)
-    monthly_data = [{"date": d.strftime("%m"), "price": float(p)} for d,p in zip(monthly.index, monthly)]
+    monthly_data = [{"date": d.strftime("%m"), "price": float(p)} for d, p in zip(monthly.index, monthly)]
 
     rate = get_exchange_rate()
 
-    # -----------------------------
-    # Gemini 호출
-    # -----------------------------
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    # Gemini 모델 (latest)
+    model = genai.GenerativeModel("gemini-1.5-flash-latest")
 
     prompt = build_prompt(ticker_input, price, rate, monthly_data, rsi)
 
@@ -172,17 +189,27 @@ if st.sidebar.button("분석 실행"):
 
     data = safe_json_parse(res.text)
 
+    # fallback
     if not data:
-        st.error("AI 응답 실패")
-        st.stop()
+        st.warning("AI 응답 오류 → 기본값 사용")
+        data = {
+            "opinion": "HOLD",
+            "confidence": 0.5,
+            "summary": "데이터 부족으로 보수적 접근 필요",
+            "price": {"target": 0},
+            "reason": [],
+            "risks": [],
+            "strategy": {"buy": [], "stop_loss": 0},
+            "technical": {}
+        }
 
     # -----------------------------
     # UI 출력
     # -----------------------------
     st.markdown(f"## {data.get('stock_name', ticker_input)}")
 
-    # 의견 카드
     op = data.get("opinion", "HOLD").lower()
+
     st.markdown(f"""
     <div class="card">
         <div class="{op}">{data.get("opinion")} ({data.get("confidence",0)*100:.0f}%)</div>
@@ -190,16 +217,17 @@ if st.sidebar.button("분석 실행"):
     </div>
     """, unsafe_allow_html=True)
 
-    # 가격
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.metric("현재가", f"{price:,.0f}" if market=="KR" else f"${price:,.2f}")
-        if market=="US":
+        if market == "KR":
+            st.metric("현재가", f"{price:,.0f}원")
+        else:
+            st.metric("현재가", f"${price:,.2f}")
             st.caption(f"약 {price*rate:,.0f}원")
 
     with col2:
-        st.metric("목표가", data["price"].get("target",0))
+        st.metric("목표가", data["price"].get("target", 0))
 
     with col3:
         st.metric("RSI", f"{rsi:.1f}")
@@ -214,9 +242,11 @@ if st.sidebar.button("분석 실행"):
         y=chart_df['price'],
         mode='lines+markers'
     ))
+
+    fig.update_layout(height=300, template="plotly_white")
     st.plotly_chart(fig, use_container_width=True)
 
-    # 근거 & 리스크
+    # 상세
     col1, col2 = st.columns(2)
 
     with col1:
@@ -229,11 +259,11 @@ if st.sidebar.button("분석 실행"):
             st.write(f"- {r}")
 
     with col2:
-        st.markdown("### 💰 전략")
-        for b in data["strategy"]["buy"]:
+        st.markdown("### 💰 투자 전략")
+        for b in data["strategy"].get("buy", []):
             st.write(f"- {b['price']} ({b['ratio']*100:.0f}%)")
 
-        st.write(f"손절가: {data['strategy']['stop_loss']}")
+        st.write(f"손절가: {data['strategy'].get('stop_loss', 0)}")
 
     # 경고
-    st.caption("※ 본 정보는 투자 참고용이며 책임은 본인에게 있습니다.")
+    st.caption("※ 본 정보는 투자 참고용이며 투자 책임은 본인에게 있습니다.")
