@@ -1,5 +1,5 @@
 import streamlit as st
-import requests
+import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 from ta.momentum import RSIIndicator
@@ -11,7 +11,6 @@ import json, re
 # -----------------------------
 st.set_page_config(page_title="AI 투자 분석", layout="wide")
 
-ALPHA_KEY = "여기에_ALPHA_KEY"
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # -----------------------------
@@ -34,45 +33,26 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------
-# 한국 주식 (네이버)
+# 한국/미국 통합 데이터
 # -----------------------------
-def get_kr_data(code):
+def get_data(symbol, market):
     try:
-        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=180&requestType=0"
-        headers = {"User-Agent":"Mozilla/5.0"}
-        res = requests.get(url, headers=headers)
+        if market == "KR":
+            # 한국: .KS (코스피)
+            ticker = symbol + ".KS"
+        else:
+            ticker = symbol
 
-        rows = []
-        for line in res.text.split("\n"):
-            p = line.split("|")
-            if len(p) > 5:
-                rows.append({"date": p[0], "close": float(p[4])})
+        df = yf.download(ticker, period="6mo", interval="1d", progress=False)
 
-        df = pd.DataFrame(rows)
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date")
+        if df.empty:
+            return df
+
+        # 컬럼 정리
+        df.columns = df.columns.get_level_values(0)
+        df = df.rename(columns={"Close":"close"})
+
         return df
-
-    except:
-        return pd.DataFrame()
-
-# -----------------------------
-# 미국 주식 (Alpha Vantage)
-# -----------------------------
-def get_us_data(symbol):
-    try:
-        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&apikey={ALPHA_KEY}"
-        res = requests.get(url).json()
-
-        if "Time Series (Daily)" not in res:
-            return pd.DataFrame()
-
-        df = pd.DataFrame(res["Time Series (Daily)"]).T
-        df = df.rename(columns={"4. close":"close"})
-        df["close"] = df["close"].astype(float)
-        df.index = pd.to_datetime(df.index)
-
-        return df.sort_index()
 
     except:
         return pd.DataFrame()
@@ -124,30 +104,23 @@ st.title("📈 AI 투자 분석")
 
 market = st.sidebar.selectbox("시장", ["KR","US"])
 
-# 간단 종목 매핑
-kr_dict = {
-    "삼성전자":"005930",
-    "SK하이닉스":"000660",
-    "NAVER":"035420"
-}
-
 if market == "KR":
-    name = st.sidebar.text_input("종목명", "삼성전자")
-    code = kr_dict.get(name, name)
-    df = get_kr_data(code)
+    code = st.sidebar.text_input("종목코드 (예: 005930)", "005930")
 else:
-    code = st.sidebar.text_input("티커", "AAPL")
-    df = get_us_data(code)
+    code = st.sidebar.text_input("티커 (예: AAPL)", "AAPL")
 
 # -----------------------------
 # 실행
 # -----------------------------
 if st.sidebar.button("분석 실행"):
 
+    df = get_data(code, market)
+
     if df.empty:
-        st.error("데이터 불러오기 실패")
+        st.error("데이터 불러오기 실패 (티커 확인 또는 네트워크 문제)")
         st.stop()
 
+    # RSI
     df["rsi"] = RSIIndicator(df["close"]).rsi()
 
     price = float(df["close"].iloc[-1])
@@ -165,7 +138,9 @@ if st.sidebar.button("분석 실행"):
 
     op = data.get("opinion","HOLD").lower()
 
+    # -----------------------------
     # 결과 카드
+    # -----------------------------
     st.markdown(f"""
     <div class="card">
         <div class="{op}">
