@@ -12,7 +12,6 @@ import time
 # 설정
 # -----------------------------
 st.set_page_config(page_title="AI 투자 분석", layout="wide")
-
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # -----------------------------
@@ -46,38 +45,38 @@ def safe_json_parse(text):
     return None
 
 # -----------------------------
-# KRX 종목 리스트
+# KRX 리스트
 # -----------------------------
-@st.cache_data(ttl=86400)
 @st.cache_data(ttl=86400)
 def get_krx_list():
     try:
-        # 방법 1: 가장 안정적인 최신 URL (2025~2026 기준)
         url = "https://kind.krx.co.kr/corplist.do?method=download&searchType=13"
         df = pd.read_html(url, header=0)[0]
-        
+
         df = df[['회사명', '종목코드']].copy()
         df['종목코드'] = df['종목코드'].astype(str).str.zfill(6)
-        return dict(zip(df['회사명'], df['종목코드']))
-        
-    except Exception as e:
-        st.warning(f"KRX 리스트 로드 실패: {str(e)[:100]}... 대체 리스트 사용")
-        
-        # 방법 2: 실패 시 대체 (상위 종목만이라도)
-        fallback = {
-            "삼성전자": "005930", "SK하이닉스": "000660", "LG에너지솔루션": "373220",
-            "삼성바이오로직스": "207940", "현대차": "005380", "카카오": "035720",
-            "네이버": "035420", "삼성전자우": "005935", "POSCO홀딩스": "005490",
-            # 자주 쓰는 종목 30~50개 정도 미리 넣어두는 게 좋음
-        }
-        return fallback
+
+        return df
+
+    except:
+        # fallback
+        data = [
+            ["삼성전자","005930"],
+            ["SK하이닉스","000660"],
+            ["LG에너지솔루션","373220"],
+            ["삼성바이오로직스","207940"],
+            ["현대차","005380"],
+            ["카카오","035720"],
+            ["네이버","035420"]
+        ]
+        return pd.DataFrame(data, columns=["회사명","종목코드"])
 
 # -----------------------------
-# yfinance 안정화
+# 데이터 안정화
 # -----------------------------
 @st.cache_data(ttl=60)
 def get_stock_data_safe(ticker):
-    for i in range(3):
+    for _ in range(3):
         try:
             df = yf.download(
                 ticker,
@@ -86,28 +85,19 @@ def get_stock_data_safe(ticker):
                 progress=False,
                 threads=False
             )
-
             if not df.empty:
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
                 return df
-
         except:
             pass
-
         time.sleep(1)
-
     return pd.DataFrame()
 
-# -----------------------------
-# 한국 주식 (fallback 포함)
-# -----------------------------
 def get_kr_data_safe(code):
     df = get_stock_data_safe(code + ".KS")
-
     if df.empty:
         df = get_stock_data_safe(code + ".KQ")
-
     return df
 
 # -----------------------------
@@ -121,7 +111,7 @@ def get_exchange_rate():
     return 1380.0
 
 # -----------------------------
-# 프롬프트
+# AI 프롬프트
 # -----------------------------
 def build_prompt(stock, price, rate, monthly, rsi):
     return f"""
@@ -142,14 +132,9 @@ RSI: {rsi}
   "opinion": "BUY | HOLD | SELL",
   "confidence": 0.0,
   "summary": "",
-
-  "price": {{
-    "target": 0
-  }},
-
+  "price": {{"target": 0}},
   "reason": ["", "", ""],
   "risks": ["", ""],
-
   "strategy": {{
     "buy": [
       {{"price": 0, "ratio": 0.3}},
@@ -159,8 +144,6 @@ RSI: {rsi}
     "stop_loss": 0
   }}
 }}
-
-설명 금지
 """
 
 # -----------------------------
@@ -168,66 +151,66 @@ RSI: {rsi}
 # -----------------------------
 st.title("📈 AI 투자 분석")
 
-# 사이드바 상단
 market = st.sidebar.selectbox("시장", ["KR", "US"])
 
+# 🔥 핵심 개선: 검색 + 직접입력 + 코드검색
 if market == "KR":
-    krx_dict = get_krx_list()
-    # 회사명 리스트 (검색 편하게)
-    company_list = sorted(krx_dict.keys())
-    
-    ticker_input = st.sidebar.selectbox(
-        "종목 검색",
-        options=company_list,
-        index=company_list.index("삼성전자") if "삼성전자" in company_list else 0
-    )
+    df_krx = get_krx_list()
+
+    search_mode = st.sidebar.radio("검색 방식", ["검색", "직접 입력"])
+
+    if search_mode == "검색":
+        keyword = st.sidebar.text_input("종목명 검색")
+
+        filtered = df_krx[df_krx['회사명'].str.contains(keyword, case=False, na=False)] if keyword else df_krx
+
+        ticker_input = st.sidebar.selectbox(
+            "종목 선택",
+            filtered['회사명'].tolist()
+        )
+    else:
+        ticker_input = st.sidebar.text_input("종목명 또는 코드", "005930")
+
 else:
-    ticker_input = st.sidebar.text_input("종목 티커 입력 (예: AAPL)", "AAPL")
+    ticker_input = st.sidebar.text_input("티커 입력", "AAPL")
 
 # -----------------------------
 # 실행
 # -----------------------------
 if st.sidebar.button("분석 실행"):
 
-    ticker = ticker_input.strip()
-
-    # 한국 주식 변환
     if market == "KR":
-        krx_dict = get_krx_list()
+        df_krx = get_krx_list()
 
-        if ticker in krx_dict:
-            code = krx_dict[ticker]
-        elif ticker.isdigit():
-            code = ticker.zfill(6)
+        if ticker_input.isdigit():
+            code = ticker_input.zfill(6)
         else:
-            st.error("종목명을 찾을 수 없습니다.")
-            st.stop()
+            row = df_krx[df_krx['회사명'] == ticker_input]
+            if row.empty:
+                st.error("종목을 찾을 수 없습니다.")
+                st.stop()
+            code = row.iloc[0]['종목코드']
 
         df = get_kr_data_safe(code)
 
     else:
-        df = get_stock_data_safe(ticker)
+        df = get_stock_data_safe(ticker_input)
 
-    # 데이터 실패 처리
     if df.empty:
-        st.error("현재 데이터 제공이 원활하지 않습니다. 잠시 후 다시 시도해주세요.")
+        st.error("데이터 불러오기 실패 (yfinance 한계)")
         st.stop()
 
     price = float(df['Close'].iloc[-1])
 
-    # RSI
     df['rsi'] = RSIIndicator(df['Close']).rsi()
     rsi = float(df['rsi'].iloc[-1])
 
-    # 6개월 데이터
     monthly = df['Close'].resample('ME').last().tail(6)
     monthly_data = [{"date": d.strftime("%m"), "price": float(p)} for d, p in zip(monthly.index, monthly)]
 
     rate = get_exchange_rate()
 
-    # AI
     model = genai.GenerativeModel("gemini-1.5-flash-latest")
-
     prompt = build_prompt(ticker_input, price, rate, monthly_data, rsi)
 
     with st.spinner("AI 분석 중..."):
@@ -235,12 +218,11 @@ if st.sidebar.button("분석 실행"):
 
     data = safe_json_parse(res.text)
 
-    # fallback
     if not data:
         data = {
             "opinion": "HOLD",
             "confidence": 0.5,
-            "summary": "데이터 부족으로 보수적 접근 필요",
+            "summary": "데이터 부족",
             "price": {"target": 0},
             "reason": [],
             "risks": [],
@@ -248,7 +230,7 @@ if st.sidebar.button("분석 실행"):
         }
 
     # -----------------------------
-    # UI 출력
+    # 출력
     # -----------------------------
     st.subheader(ticker_input)
 
@@ -264,11 +246,7 @@ if st.sidebar.button("분석 실행"):
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if market == "KR":
-            st.metric("현재가", f"{price:,.0f}원")
-        else:
-            st.metric("현재가", f"${price:,.2f}")
-            st.caption(f"약 {price*rate:,.0f}원")
+        st.metric("현재가", f"{price:,.0f}원" if market=="KR" else f"${price:,.2f}")
 
     with col2:
         st.metric("목표가", data["price"].get("target", 0))
@@ -288,7 +266,7 @@ if st.sidebar.button("분석 실행"):
         mode='lines+markers'
     ))
 
-    fig.update_layout(height=300, template="plotly_white")
+    fig.update_layout(height=300)
     st.plotly_chart(fig, use_container_width=True)
 
     # 상세
@@ -304,10 +282,10 @@ if st.sidebar.button("분석 실행"):
             st.write(f"- {r}")
 
     with col2:
-        st.markdown("### 💰 투자 전략")
+        st.markdown("### 💰 전략")
         for b in data["strategy"].get("buy", []):
             st.write(f"- {b['price']} ({b['ratio']*100:.0f}%)")
 
         st.write(f"손절가: {data['strategy'].get('stop_loss', 0)}")
 
-    st.caption("※ 본 정보는 투자 참고용이며 투자 책임은 본인에게 있습니다.")
+    st.caption("※ 투자 책임은 본인에게 있습니다.")
