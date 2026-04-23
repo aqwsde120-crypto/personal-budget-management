@@ -434,7 +434,7 @@ def generate_ai_analysis(ticker, financial_metrics, pullback_info, df, macro_ind
         genai.configure(api_key=api_key)
         
         # Gemini Pro 모델 사용 (무료, 안정적)
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         # 응답 생성
         response = model.generate_content(prompt)
