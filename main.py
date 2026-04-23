@@ -430,14 +430,14 @@ def generate_ai_analysis(ticker, financial_metrics, pullback_info, df, macro_ind
         genai.configure(api_key=api_key)
         
         # Gemini Pro 모델 사용 (무료, 안정적)
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         
         # 응답 생성
         response = model.generate_content(prompt)
         
         return response.text
     except Exception as e:
-        return f"AI 분석 생성 실패: {str(e)}\n\n[참고] Google AI Studio API 키를 확인해주세요."
+        return f"분석 실패: {str(e)}"
 
 
 # 메인 앱
