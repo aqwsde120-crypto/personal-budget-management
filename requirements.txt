@@ -1,7 +1,8 @@
-streamlit
-yfinance
-FinanceDataReader
-pandas
-numpy
-plotly
-ta
+streamlit==1.37.0
+yfinance==0.2.40
+finance-datareader==0.9.50
+pandas==2.2.2
+numpy==1.26.4
+plotly==5.22.0
+ta==0.11.0
+lxml==5.2.2
