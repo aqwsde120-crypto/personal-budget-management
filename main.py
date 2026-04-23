@@ -76,52 +76,26 @@ def get_stock_data(ticker, market='US', period='1y'):
 
 
 def get_financial_metrics(ticker, market='US'):
-    """
-    재무 지표를 가져오는 함수
-    
-    Args:
-        ticker: 종목 코드
-        market: 'US' 또는 'KR'
-    
-    Returns:
-        dict: 재무 지표 딕셔너리
-    """
     try:
-        if market == 'KR':
-            # 한국 주식의 경우 KS/KQ 자동 판별
-            stock = None
-            for suffix in ['.KS', '.KQ']:
-                try:
-                    temp_stock = yf.Ticker(ticker + suffix)
-                    # info를 가져와서 유효한지 확인
-                    test_info = temp_stock.info
-                    if test_info and test_info.get('regularMarketPrice'):
-                        stock = temp_stock
-                        break
-                except:
-                    continue
-            
-            if stock is None:
-                # 접미사 없이 시도
-                stock = yf.Ticker(ticker)
-        else:
-            stock = yf.Ticker(ticker)
+        # Ticker 객체 생성 시 오류 방지를 위해 딜레이나 세션 추가 고려 가능
+        symbol = ticker if market == 'US' else (ticker + ".KS" if len(ticker) == 6 else ticker)
+        stock = yf.Ticker(symbol)
         
-        # info 가져오기 시도
+        # .info 접근 전 데이터 유무 확인
+        info = {}
         try:
             info = stock.info
-        except Exception as e:
-            st.warning(f"재무 정보 로딩 중 오류: {e}")
+            if not info or 'regularMarketPrice' not in info:
+                # 기본 정보가 없는 경우 빈 딕셔너리 처리
+                info = {}
+        except Exception:
             info = {}
-        
-        # 안전하게 값 가져오기
+
+        # 안전하게 값을 가져오는 내부 함수 강화
         def safe_get(key, default='N/A'):
-            try:
-                value = info.get(key, default)
-                return value if value is not None else default
-            except:
-                return default
-        
+            val = info.get(key, default)
+            return val if val is not None and val != 'N/A' else default
+
         metrics = {
             'PER': safe_get('trailingPE'),
             'PBR': safe_get('priceToBook'),
@@ -281,49 +255,30 @@ def detect_pullback(df):
 
 
 def get_macro_indicators():
-    """
-    거시 경제 지표를 가져오는 함수
-    
-    지표:
-    - 미국 10년물 국채 금리 (^TNX)
-    - 원/달러 환율 (KRW=X)
-    
-    Returns:
-        dict: 거시 경제 지표
-    """
     try:
-        # 미국 10년물 국채 금리
-        tnx = yf.Ticker("^TNX")
-        tnx_data = tnx.history(period='5d')
-        current_yield = tnx_data['Close'].iloc[-1] if len(tnx_data) > 0 else None
-        prev_yield = tnx_data['Close'].iloc[-2] if len(tnx_data) > 1 else None
+        # 기간을 1개월로 늘려 데이터 확보 안정성 강화
+        tnx_data = yf.Ticker("^TNX").history(period='1mo')
+        krw_data = yf.Ticker("KRW=X").history(period='1mo')
         
-        # 원/달러 환율
-        krw = yf.Ticker("KRW=X")
-        krw_data = krw.history(period='5d')
-        current_krw = krw_data['Close'].iloc[-1] if len(krw_data) > 0 else None
-        prev_krw = krw_data['Close'].iloc[-2] if len(krw_data) > 1 else None
+        res = {}
         
-        # 변화율 계산
-        yield_change = ((current_yield - prev_yield) / prev_yield * 100) if prev_yield else 0
-        krw_change = ((current_krw - prev_krw) / prev_krw * 100) if prev_krw else 0
-        
-        return {
-            '미국10년물금리': {
-                '현재': f"{current_yield:.2f}%" if current_yield else 'N/A',
-                '변화': f"{yield_change:+.2f}%" if current_yield else 'N/A'
-            },
-            '원달러환율': {
-                '현재': f"{current_krw:.2f}" if current_krw else 'N/A',
-                '변화': f"{krw_change:+.2f}%" if current_krw else 'N/A'
-            }
-        }
-    except Exception as e:
-        st.warning(f"거시 지표 가져오기 실패: {e}")
-        return {
-            '미국10년물금리': {'현재': 'N/A', '변화': 'N/A'},
-            '원달러환율': {'현재': 'N/A', '변화': 'N/A'}
-        }
+        # 금리 처리
+        if len(tnx_data) >= 2:
+            curr, prev = tnx_data['Close'].iloc[-1], tnx_data['Close'].iloc[-2]
+            res['미국10년물금리'] = {'현재': f"{curr:.2f}%", '변화': f"{(curr-prev)/prev*100:+.2f}%"}
+        else:
+            res['미국10년물금리'] = {'현재': 'N/A', '변화': 'N/A'}
+            
+        # 환율 처리 (동일 로직)
+        if len(krw_data) >= 2:
+            curr, prev = krw_data['Close'].iloc[-1], krw_data['Close'].iloc[-2]
+            res['원달러환율'] = {'현재': f"{curr:.2f}", '변화': f"{(curr-prev)/prev*100:+.2f}%"}
+        else:
+            res['원달러환율'] = {'현재': 'N/A', '변화': 'N/A'}
+            
+        return res
+    except:
+        return {'미국10년물금리': {'현재': 'N/A', '변화': 'N/A'}, '원달러환율': {'현재': 'N/A', '변화': 'N/A'}}
 
 
 def create_candlestick_chart(df):
