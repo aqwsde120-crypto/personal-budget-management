@@ -16,7 +16,159 @@ st.set_page_config(page_title="AI 주식 통합 진단", layout="wide")
 st.title("📈 AI 주식 통합 진단")
 
 # -----------------------------
-# 데이터 불러오기 (6개월)
+# 한국 종목 검색
+# -----------------------------
+@st.cache_data
+def load_krx_list():
+    return fdr.StockListing('KRX')
+
+def search_kr_ticker(name):
+    df = load_krx_list()
+    result = df[df['Name'].str.contains(name)]
+    return result[['Name', 'Code']].head(10)
+
+# -----------------------------
+# 미국 종목 간단 매핑 (확장 가능)
+# -----------------------------
+US_TICKER_MAP = {
+    "애플": "AAPL",
+    "마이크로소프트": "MSFT",
+    "엔비디아": "NVDA",
+    "아마존": "AMZN",
+    "테슬라": "TSLA",
+    "알파벳A": "GOOGL",
+    "알파벳C": "GOOG",
+    "메타": "META",
+    "넷플릭스": "NFLX",
+    "브로드컴": "AVGO",
+    "AMD": "AMD",
+    "인텔": "INTC",
+    "퀄컴": "QCOM",
+    "마이크론": "MU",
+    "TSMC": "TSM",
+    "ASML": "ASML",
+    "어도비": "ADBE",
+    "세일즈포스": "CRM",
+    "오라클": "ORCL",
+    "IBM": "IBM",
+
+    # ETF
+    "S&P500": "SPY",
+    "나스닥100": "QQQ",
+    "다우존스": "DIA",
+    "러셀2000": "IWM",
+    "배당ETF": "VYM",
+    "고배당": "SCHD",
+    "성장ETF": "VUG",
+    "가치ETF": "VTV",
+    "전세계": "VT",
+    "신흥국": "VWO",
+
+    # 레버리지/인버스
+    "나스닥레버리지3배": "TQQQ",
+    "나스닥인버스3배": "SQQQ",
+    "S&P레버리지3배": "UPRO",
+    "S&P인버스3배": "SPXU",
+    "반도체3배": "SOXL",
+    "반도체인버스3배": "SOXS",
+
+    # 금융/소비재
+    "JP모건": "JPM",
+    "뱅크오브아메리카": "BAC",
+    "골드만삭스": "GS",
+    "비자": "V",
+    "마스터카드": "MA",
+    "코카콜라": "KO",
+    "펩시": "PEP",
+    "월마트": "WMT",
+    "코스트코": "COST",
+    "맥도날드": "MCD",
+    "스타벅스": "SBUX",
+    "나이키": "NKE",
+
+    # 헬스케어
+    "존슨앤존슨": "JNJ",
+    "화이자": "PFE",
+    "머크": "MRK",
+    "애브비": "ABBV",
+    "일라이릴리": "LLY",
+    "모더나": "MRNA",
+
+    # 산업/에너지
+    "엑슨모빌": "XOM",
+    "셰브론": "CVX",
+    "록히드마틴": "LMT",
+    "보잉": "BA",
+    "캐터필러": "CAT",
+    "GE": "GE",
+
+    # 전기차/미래
+    "리비안": "RIVN",
+    "루시드": "LCID",
+    "니오": "NIO",
+    "샤오펑": "XPEV",
+
+    # 클라우드/AI
+    "스노우플레이크": "SNOW",
+    "팔란티어": "PLTR",
+    "유니티": "U",
+    "로블록스": "RBLX",
+
+    # 반도체 ETF
+    "반도체ETF": "SOXX",
+    "반도체ETF2": "SMH",
+
+    # ARK ETF
+    "ARK혁신": "ARKK",
+    "ARK유전자": "ARKG",
+    "ARK핀테크": "ARKF",
+
+    # 기타 인기
+    "우버": "UBER",
+    "에어비앤비": "ABNB",
+    "디즈니": "DIS",
+    "페이팔": "PYPL",
+    "쇼피파이": "SHOP",
+    "트위터": "TWTR",  # 참고: 현재 X (비상장 상태 반영 필요)
+    "줌": "ZM",
+
+    # 추가 분산
+    "3M": "MMM",
+    "허니웰": "HON",
+    "텍사스인스트루먼트": "TXN",
+    "AMD ETF": "XSD",
+
+    # 채권
+    "미국채20년": "TLT",
+    "미국채7-10년": "IEF",
+    "단기채": "SHY",
+
+    # 금/원자재
+    "금ETF": "GLD",
+    "은ETF": "SLV",
+    "원유ETF": "USO",
+
+    # 리츠
+    "리얼티인컴": "O",
+    "아메리칸타워": "AMT",
+    "프로로지스": "PLD",
+
+    # 추가 인기 종목 채우기
+    "도어대시": "DASH",
+    "크라우드스트라이크": "CRWD",
+    "서비스나우": "NOW",
+    "줌인포": "ZI",
+    "데이터독": "DDOG",
+    "허브스팟": "HUBS",
+    "워크데이": "WDAY"
+}
+
+if market == "US":
+    selected = st.sidebar.selectbox("미국 인기 종목", list(US_TICKER_MAP.keys()))
+    ticker = US_TICKER_MAP[selected]
+
+# -----------------------------
+# 데이터 불러오기
 # -----------------------------
 def get_stock_data(ticker, market):
     try:
@@ -26,6 +178,7 @@ def get_stock_data(ticker, market):
             df = fdr.DataReader(ticker, start, end)
         else:
             df = yf.Ticker(ticker).history(period="6mo")
+
         return df
     except:
         return None
@@ -98,9 +251,8 @@ def get_momentum(df):
 
     vol_recent = df['Volume'].iloc[-5:].mean()
     vol_prev = df['Volume'].iloc[-20:-5].mean()
-    vol_up = vol_recent > vol_prev
 
-    return ret20, vol_up, latest['RSI']
+    return ret20, vol_recent > vol_prev, latest['RSI']
 
 # -----------------------------
 # 분석 엔진
@@ -193,8 +345,7 @@ def generate_report(df, pullback, market):
 
 👉 최종 의견: **{opinion}**
 """
-
-    return score, opinion, report, close, buy_price, stop_loss
+    return opinion, report, close, buy_price, stop_loss
 
 # -----------------------------
 # 차트
@@ -211,13 +362,9 @@ def create_chart(df):
     ), row=1, col=1)
 
     fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name="MA20"), row=1, col=1)
-
     fig.add_trace(go.Bar(x=df.index, y=df['Volume']), row=2, col=1)
 
-    fig.update_layout(
-        yaxis=dict(title="가격 (KRW)", tickformat=","),
-        height=600
-    )
+    fig.update_layout(height=600)
 
     return fig
 
@@ -227,14 +374,43 @@ def create_chart(df):
 def main():
 
     market = st.sidebar.selectbox("시장", ["US", "KR"])
-    ticker = st.sidebar.text_input("종목", "AAPL" if market=="US" else "005930")
+    search_name = st.sidebar.text_input("종목명 검색")
+
+    ticker = None
+
+    # 한국 종목 검색
+    if market == "KR" and search_name:
+        results = search_kr_ticker(search_name)
+        if not results.empty:
+            selected = st.sidebar.selectbox(
+                "종목 선택",
+                results.apply(lambda x: f"{x['Name']} ({x['Code']})", axis=1)
+            )
+            ticker = selected.split("(")[-1].replace(")", "")
+
+    # 미국 종목 검색
+    elif market == "US" and search_name:
+        ticker = search_us_ticker(search_name)
+        if ticker:
+            st.sidebar.success(f"{search_name} → {ticker}")
+        else:
+            st.sidebar.warning("미국 종목은 일부만 지원")
+
+    # 직접 입력 fallback
+    manual = st.sidebar.text_input("티커 직접 입력")
+    if manual:
+        ticker = manual
 
     if st.sidebar.button("분석 실행"):
+
+        if not ticker:
+            st.error("종목을 입력하세요")
+            return
 
         df = get_stock_data(ticker, market)
 
         if df is None or df.empty:
-            st.error("데이터 없음")
+            st.error("데이터 불러오기 실패")
             return
 
         df = convert_to_krw(df, market)
@@ -242,22 +418,15 @@ def main():
 
         pullback = detect_pullback(df)
 
-        score, opinion, report, price, buy, stop = generate_report(df, pullback, market)
+        opinion, report, price, buy, stop = generate_report(df, pullback, market)
 
-        # 상단 KPI
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("투자 의견", opinion)
         col2.metric("현재가", f"{price:,.0f} 원")
         col3.metric("매수 추천가", f"{buy:,.0f} 원")
         col4.metric("손절가", f"{stop:,.0f} 원")
 
-        if pullback:
-            st.success("눌림목 발생")
-        else:
-            st.info("눌림목 없음")
-
         st.markdown(report)
-
         st.plotly_chart(create_chart(df), use_container_width=True)
 
 # 실행
