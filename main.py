@@ -77,21 +77,14 @@ def get_stock_data(ticker, market='US', period='1y'):
 
 def get_financial_metrics(ticker, market='US'):
     try:
-        # Ticker 객체 생성 시 오류 방지를 위해 딜레이나 세션 추가 고려 가능
         symbol = ticker if market == 'US' else (ticker + ".KS" if len(ticker) == 6 else ticker)
         stock = yf.Ticker(symbol)
         
-        # .info 접근 전 데이터 유무 확인
-        info = {}
-        try:
-            info = stock.info
-            if not info or 'regularMarketPrice' not in info:
-                # 기본 정보가 없는 경우 빈 딕셔너리 처리
-                info = {}
-        except Exception:
+        # 최신 yfinance 버전에서는 .info 대신 .fast_info를 섞어 쓰는 것이 안정적임
+        info = stock.info
+        if not info:
             info = {}
 
-        # 안전하게 값을 가져오는 내부 함수 강화
         def safe_get(key, default='N/A'):
             val = info.get(key, default)
             return val if val is not None and val != 'N/A' else default
@@ -256,18 +249,22 @@ def detect_pullback(df):
 
 def get_macro_indicators():
     try:
-        # 기간을 1개월로 늘려 데이터 확보 안정성 강화
+        # 기간을 1mo로 늘려 데이터 부족 에러(N/A) 방지
         tnx_data = yf.Ticker("^TNX").history(period='1mo')
         krw_data = yf.Ticker("KRW=X").history(period='1mo')
         
         res = {}
-        
-        # 금리 처리
-        if len(tnx_data) >= 2:
-            curr, prev = tnx_data['Close'].iloc[-1], tnx_data['Close'].iloc[-2]
-            res['미국10년물금리'] = {'현재': f"{curr:.2f}%", '변화': f"{(curr-prev)/prev*100:+.2f}%"}
-        else:
-            res['미국10년물금리'] = {'현재': 'N/A', '변화': 'N/A'}
+        for name, data in [('미국10년물금리', tnx_data), ('원달러환율', krw_data)]:
+            if len(data) >= 2:
+                curr, prev = data['Close'].iloc[-1], data['Close'].iloc[-2]
+                change = ((curr - prev) / prev) * 100
+                res[name] = {'현재': f"{curr:.2f}%" if '금리' in name else f"{curr:.2f}", 
+                             '변화': f"{change:+.2f}%"}
+            else:
+                res[name] = {'현재': 'N/A', '변화': 'N/A'}
+        return res
+    except:
+        return {'미국10년물금리': {'현재': 'N/A', '변화': 'N/A'}, '원달러환율': {'현재': 'N/A', '변화': 'N/A'}}
             
         # 환율 처리 (동일 로직)
         if len(krw_data) >= 2:
