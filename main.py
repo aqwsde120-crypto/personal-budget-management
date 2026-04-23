@@ -277,7 +277,6 @@ def get_macro_indicators():
     except:
         return {'미국10년물금리': {'현재': 'N/A', '변화': 'N/A'}, '원달러환율': {'현재': 'N/A', '변화': 'N/A'}}
 
-
 def create_candlestick_chart(df):
     """
     Plotly를 사용한 인터랙티브 캔들스틱 차트 생성
