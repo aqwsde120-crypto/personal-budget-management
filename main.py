@@ -6,7 +6,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
-import google.generativeai as genai
+from google import genai
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
 
@@ -188,14 +188,29 @@ def create_candlestick_chart(df):
 
 def generate_ai_analysis(ticker, financial_metrics, pullback_info, df, macro_indicators, api_key):
     try:
-        genai.configure(api_key=api_key)
-        # [404 해결] 모델명은 반드시 'gemini-1.5-flash' 전체 사용
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
-        prompt = f"종목 {ticker}의 종합 투자 진단 리포트를 작성해줘. 재무: {financial_metrics}, 눌림목: {pullback_info}, 거시경제: {macro_indicators}"
-        response = model.generate_content(prompt)
+        client = genai.Client(api_key=api_key)
+
+        prompt = f"""
+        종목 {ticker} 투자 분석
+
+        재무: {financial_metrics}
+        눌림목: {pullback_info}
+        거시경제: {macro_indicators}
+
+        1. 현재 상태
+        2. 투자 의견
+        3. 리스크
+        4. 결론
+        """
+
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt
+        )
+
         return response.text
+
     except Exception as e:
-        if "403" in str(e): return "에러: API 키가 유출되어 차단되었습니다. 새로운 키를 발급받으세요."
         return f"분석 실패: {str(e)}"
 
 def main():
