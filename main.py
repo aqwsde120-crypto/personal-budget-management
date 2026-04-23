@@ -190,7 +190,7 @@ def generate_ai_analysis(ticker, financial_metrics, pullback_info, df, macro_ind
     try:
         genai.configure(api_key=api_key)
         # [404 해결] 모델명은 반드시 'gemini-1.5-flash' 전체 사용
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
         prompt = f"종목 {ticker}의 종합 투자 진단 리포트를 작성해줘. 재무: {financial_metrics}, 눌림목: {pullback_info}, 거시경제: {macro_indicators}"
         response = model.generate_content(prompt)
         return response.text
