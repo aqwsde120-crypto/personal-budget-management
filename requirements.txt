@@ -1,9 +1,7 @@
-streamlit==1.31.0
-yfinance>=0.2.40  # 최신 버전 권장
-finance-datareader==0.9.50
-pandas==2.1.4
-numpy==1.26.3
-plotly==5.18.0
-google-genai
-ta==0.11.0
-requests==2.31.0
+streamlit
+yfinance
+FinanceDataReader
+pandas
+numpy
+plotly
+ta
