@@ -1,33 +1,218 @@
 import streamlit as st
 import yfinance as yf
-import FinanceDataReader as fdr
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
 
-# -----------------------------
-# 기본 설정
-# -----------------------------
 st.set_page_config(page_title="AI 주식 통합 진단", layout="wide")
 st.title("📈 AI 주식 통합 진단")
 
 # -----------------------------
-# 한국 종목 리스트
+# 🇰🇷 한국 종목 (섹터)
 # -----------------------------
-@st.cache_data
-def load_krx_list():
-    return fdr.StockListing('KRX')
+KR_TICKER_MAP = {
 
-def search_kr_ticker(name):
-    df = load_krx_list()
-    return df[df['Name'].str.contains(name)][['Name', 'Code']].head(10)
+# ======================
+# 반도체 / IT
+# ======================
+"삼성전자": "005930",
+"SK하이닉스": "000660",
+"삼성전자우": "005935",
+"DB하이텍": "000990",
+"한미반도체": "042700",
+"리노공업": "058470",
+"원익IPS": "240810",
+"주성엔지니어링": "036930",
+"테스": "095610",
+"ISC": "095340",
+
+# ======================
+# 2차전지 / 소재
+# ======================
+"LG에너지솔루션": "373220",
+"삼성SDI": "006400",
+"에코프로": "086520",
+"에코프로비엠": "247540",
+"포스코퓨처엠": "003670",
+"엘앤에프": "066970",
+"SK이노베이션": "096770",
+"금양": "001570",
+"코스모신소재": "005070",
+"천보": "278280",
+
+# ======================
+# 자동차
+# ======================
+"현대차": "005380",
+"기아": "000270",
+"현대모비스": "012330",
+"현대위아": "011210",
+"HL만도": "204320",
+
+# ======================
+# 바이오 / 제약
+# ======================
+"삼성바이오로직스": "207940",
+"셀트리온": "068270",
+"셀트리온헬스케어": "091990",
+"유한양행": "000100",
+"한미약품": "128940",
+"녹십자": "006280",
+"종근당": "185750",
+"대웅제약": "069620",
+"메디톡스": "086900",
+"휴젤": "145020",
+
+# ======================
+# 인터넷 / 플랫폼
+# ======================
+"네이버": "035420",
+"카카오": "035720",
+"카카오뱅크": "323410",
+"카카오페이": "377300",
+"NHN": "181710",
+
+# ======================
+# 게임
+# ======================
+"엔씨소프트": "036570",
+"크래프톤": "259960",
+"넷마블": "251270",
+"펄어비스": "263750",
+"위메이드": "112040",
+
+# ======================
+# 금융
+# ======================
+"KB금융": "105560",
+"신한지주": "055550",
+"하나금융지주": "086790",
+"우리금융지주": "316140",
+"삼성생명": "032830",
+"삼성화재": "000810",
+
+# ======================
+# 소비재
+# ======================
+"아모레퍼시픽": "090430",
+"LG생활건강": "051900",
+"호텔신라": "008770",
+"CJ제일제당": "097950",
+"농심": "004370",
+"오리온": "271560",
+
+# ======================
+# 유통 / 플랫폼
+# ======================
+"이마트": "139480",
+"롯데쇼핑": "023530",
+"BGF리테일": "282330",
+"GS리테일": "007070",
+"쿠팡": "CPNG",
+
+# ======================
+# 건설 / 인프라
+# ======================
+"현대건설": "000720",
+"삼성물산": "028260",
+"DL이앤씨": "375500",
+"GS건설": "006360",
+"대우건설": "047040",
+
+# ======================
+# 철강 / 소재
+# ======================
+"POSCO홀딩스": "005490",
+"현대제철": "004020",
+"동국제강": "001230",
+"KG스틸": "016380",
+
+# ======================
+# 통신
+# ======================
+"SK텔레콤": "017670",
+"KT": "030200",
+"LG유플러스": "032640",
+
+# ======================
+# 에너지
+# ======================
+"한국전력": "015760",
+"한국가스공사": "036460",
+"S-Oil": "010950",
+
+# ======================
+# 항공 / 여행
+# ======================
+"대한항공": "003490",
+"아시아나항공": "020560",
+"하나투어": "039130",
+"모두투어": "080160",
+
+# ======================
+# 엔터 / 미디어
+# ======================
+"하이브": "352820",
+"JYP Ent.": "035900",
+"SM": "041510",
+"YG엔터테인먼트": "122870",
+
+# ======================
+# 기타 성장주
+# ======================
+"두산에너빌리티": "034020",
+"LS ELECTRIC": "010120",
+"한화에어로스페이스": "012450",
+"LIG넥스원": "079550",
+"현대로템": "064350"
+
+# ======================
+# 전력기기 / 전력 인프라
+# ======================
+"LS": "006260",
+"LS ELECTRIC": "010120",
+"효성중공업": "298040",
+"HD현대일렉트릭": "267260",
+"일진전기": "103590",
+"대한전선": "001440",
+"가온전선": "000500",
+"제룡전기": "033100",
+"대원전선": "006340",
+"비츠로테크": "042370"
+
+# ======================
+# 바이오 (확장)
+# ======================
+"알테오젠": "196170",
+"HLB": "028300",
+"HLB생명과학": "067630",
+"에이비엘바이오": "298380",
+"레고켐바이오": "141080",
+"지아이이노베이션": "358570",
+"유바이오로직스": "206650",
+"보로노이": "310210",
+"큐리언트": "115180",
+"차바이오텍": "085660"
+
+# ======================
+# 반도체 소부장
+# ======================
+"한솔케미칼": "014680",
+"동진쎄미켐": "005290",
+"SK머티리얼즈": "036490",
+"원익머트리얼즈": "104830",
+"솔브레인": "357780",
+"피에스케이": "319660",
+"유진테크": "084370",
+"주성엔지니어링": "036930",
+"테스나": "131970",
+"네패스": "033640"    
+}
 
 # -----------------------------
-# 미국 인기 종목 (안정형)
+# 🇺🇸 미국 종목 (섹터)
 # -----------------------------
 US_TICKER_MAP = {
     "애플": "AAPL",
@@ -163,40 +348,20 @@ US_TICKER_MAP = {
 }
 
 # -----------------------------
-# 데이터 불러오기
+# 데이터
 # -----------------------------
 def get_stock_data(ticker, market):
-    try:
-        if market == "KR":
-            end = datetime.now()
-            start = end - timedelta(days=180)
-            df = fdr.DataReader(ticker, start, end)
-        else:
-            df = yf.Ticker(ticker).history(period="6mo")
-
-        return df
-    except:
-        return None
+    if market == "KR":
+        ticker = ticker + ".KS"
+    return yf.Ticker(ticker).history(period="6mo")
 
 # -----------------------------
-# 환율 변환
-# -----------------------------
-def convert_to_krw(df, market):
-    try:
-        if market == "US":
-            rate = yf.Ticker("KRW=X").history(period="1mo")['Close'].iloc[-1]
-            for col in ['Open','High','Low','Close']:
-                df[col] *= rate
-        return df
-    except:
-        return df
-
-# -----------------------------
-# 기술적 지표
+# 지표
 # -----------------------------
 def calc_indicators(df):
     df['MA20'] = df['Close'].rolling(20).mean()
     df['MA60'] = df['Close'].rolling(60).mean()
+    df['MA120'] = df['Close'].rolling(120).mean()
 
     df['RSI'] = RSIIndicator(df['Close']).rsi()
 
@@ -212,120 +377,99 @@ def calc_indicators(df):
 def detect_pullback(df):
     latest = df.iloc[-1]
 
-    cond1 = latest['Close'] > latest['MA20']
+    cond1 = latest['Close'] > latest['MA60']
     cond2 = abs((latest['Close'] - latest['MA20']) / latest['MA20']) < 0.03
 
     vol_recent = df['Volume'].iloc[-5:].mean()
     vol_prev = df['Volume'].iloc[-20:-5].mean()
 
-    return cond1 and cond2 and (vol_recent < vol_prev)
+    return cond1 and cond2 and vol_recent < vol_prev
 
 # -----------------------------
-# 시장 흐름
+# 돌파
 # -----------------------------
-def get_market_trend(market):
-    try:
-        index = "^GSPC" if market == "US" else "KS11"
-        df = yf.Ticker(index).history(period="3mo")
-
-        ma20 = df['Close'].rolling(20).mean().iloc[-1]
-        latest = df['Close'].iloc[-1]
-
-        return "상승" if latest > ma20 else "하락"
-    except:
-        return "N/A"
-
-# -----------------------------
-# 모멘텀
-# -----------------------------
-def get_momentum(df):
+def detect_breakout(df):
     latest = df.iloc[-1]
+    high_20 = df['High'].iloc[-20:-1].max()
 
-    ret20 = (latest['Close'] / df['Close'].iloc[-20] - 1) * 100
+    vol_recent = df['Volume'].iloc[-3:].mean()
+    vol_prev = df['Volume'].iloc[-20:-3].mean()
 
-    vol_recent = df['Volume'].iloc[-5:].mean()
-    vol_prev = df['Volume'].iloc[-20:-5].mean()
-
-    return ret20, vol_recent > vol_prev
+    return (latest['Close'] > high_20) and (vol_recent > vol_prev * 1.5)
 
 # -----------------------------
-# 분석 엔진
+# 거래량 급증
 # -----------------------------
-def generate_report(df, pullback, market):
+def detect_volume_spike(df):
+    return df['Volume'].iloc[-1] > df['Volume'].iloc[-20:-1].mean() * 2
+
+# -----------------------------
+# 분석
+# -----------------------------
+def analyze(df):
 
     latest = df.iloc[-1]
-
-    close = latest['Close']
-    ma20 = latest['MA20']
-    ma60 = latest['MA60']
-    rsi = latest['RSI']
-    macd = latest['MACD']
-    macd_signal = latest['MACD_Signal']
 
     score = 0
     reasons = []
 
-    if close > ma20 > ma60:
-        trend = "상승"
-        score += 2
-        reasons.append("정배열")
-    elif close < ma20:
-        trend = "하락"
-        score -= 2
-        reasons.append("MA20 하회")
-    else:
-        trend = "횡보"
+    close = latest['Close']
+    ma20 = latest['MA20']
+    ma60 = latest['MA60']
+    ma120 = latest['MA120']
 
-    if rsi < 30:
+    # 추세
+    if close > ma20 > ma60 > ma120:
+        score += 3
+        reasons.append("정배열")
+    elif close < ma20 < ma60 < ma120:
+        score -= 3
+        reasons.append("역배열")
+
+    # RSI
+    if latest['RSI'] < 30:
         score += 2
         reasons.append("과매도")
-    elif rsi > 70:
+    elif latest['RSI'] > 70:
         score -= 2
         reasons.append("과매수")
 
-    if macd > macd_signal:
+    # MACD
+    if latest['MACD'] > latest['MACD_Signal']:
         score += 1
         reasons.append("MACD 상승")
     else:
         score -= 1
         reasons.append("MACD 하락")
 
+    # 실전 신호
+    pullback = detect_pullback(df)
+    breakout = detect_breakout(df)
+    volume_spike = detect_volume_spike(df)
+
     if pullback:
         score += 2
         reasons.append("눌림목")
 
-    if score >= 4:
+    if breakout:
+        score += 3
+        reasons.append("돌파")
+
+    if volume_spike:
+        score += 1
+        reasons.append("거래량 급증")
+
+    # 판단
+    if score >= 5:
+        opinion = "🟢 강력 매수"
+    elif score >= 3:
         opinion = "🟢 매수"
     elif score >= 1:
         opinion = "🟡 관망"
     else:
         opinion = "🔴 매도"
 
-    buy_price = ma20 if pullback else close * 0.97
-    stop_loss = min(ma60, buy_price * 0.95)
-
-    market_trend = get_market_trend(market)
-    ret20, vol_up = get_momentum(df)
-
-    report = f"""
-### 📊 종합 분석
-
-- 시장: {market_trend}
-- 20일 수익률: {ret20:.2f}%
-- 거래량: {"증가" if vol_up else "감소"}
-
-💰 현재가: {close:,.0f} 원  
-📥 매수가: {buy_price:,.0f} 원  
-🛑 손절가: {stop_loss:,.0f} 원  
-
-📈 추세: {trend} / RSI: {rsi:.1f}  
-📊 MACD: {"상승" if macd > macd_signal else "하락"}
-
-📍 근거: {" / ".join(reasons)}
-
-👉 최종 의견: **{opinion}**
-"""
-    return opinion, report, close, buy_price, stop_loss
+    return opinion, reasons, latest, pullback, breakout, volume_spike
 
 # -----------------------------
 # 차트
@@ -342,70 +486,59 @@ def create_chart(df):
     ), row=1, col=1)
 
     fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name="MA20"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], name="MA60"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['MA120'], name="MA120"), row=1, col=1)
+
     fig.add_trace(go.Bar(x=df.index, y=df['Volume']), row=2, col=1)
 
     return fig
 
 # -----------------------------
-# MAIN
+# UI
 # -----------------------------
-def main():
+market = st.sidebar.selectbox("시장", ["KR", "US"])
 
-    market = st.sidebar.selectbox("시장", ["US", "KR"])
+if market == "KR":
+    sector = st.sidebar.selectbox("섹터", list(KR_STOCKS.keys()))
+    stock_dict = KR_STOCKS[sector]
+else:
+    sector = st.sidebar.selectbox("섹터", list(US_STOCKS.keys()))
+    stock_dict = US_STOCKS[sector]
 
-    ticker = None  # 🔥 핵심 (에러 방지)
+search = st.sidebar.text_input("종목 검색")
 
-    # 한국
-    if market == "KR":
-        name = st.sidebar.text_input("종목명 검색 (예: 삼성전자)")
-        if name:
-            results = search_kr_ticker(name)
-            if not results.empty:
-                selected = st.sidebar.selectbox(
-                    "종목 선택",
-                    results.apply(lambda x: f"{x['Name']} ({x['Code']})", axis=1)
-                )
-                ticker = selected.split("(")[-1].replace(")", "")
+filtered = [k for k in stock_dict if search in k] if search else list(stock_dict.keys())
+selected = st.sidebar.selectbox("종목 선택", filtered)
 
-    # 미국
+ticker = stock_dict[selected]
+
+# -----------------------------
+# 실행
+# -----------------------------
+if st.sidebar.button("분석 실행"):
+
+    df = get_stock_data(ticker, market)
+
+    if df is None or df.empty:
+        st.error("데이터 불러오기 실패")
     else:
-        selected = st.sidebar.selectbox("미국 인기 종목", list(US_TICKER_MAP.keys()))
-        ticker = US_TICKER_MAP[selected]
-
-    # 직접 입력 (override)
-    manual = st.sidebar.text_input("티커 직접 입력 (선택)")
-    if manual:
-        ticker = manual
-
-    # 실행
-    if st.sidebar.button("분석 실행"):
-
-        if not ticker:
-            st.error("종목을 선택하거나 입력하세요")
-            return
-
-        df = get_stock_data(ticker, market)
-
-        if df is None or df.empty:
-            st.error("데이터 불러오기 실패 (티커 확인)")
-            return
-
-        df = convert_to_krw(df, market)
         df = calc_indicators(df)
 
-        pullback = detect_pullback(df)
-
-        opinion, report, price, buy, stop = generate_report(df, pullback, market)
+        opinion, reasons, latest, pullback, breakout, volume_spike = analyze(df)
 
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("투자 의견", opinion)
-        col2.metric("현재가", f"{price:,.0f} 원")
-        col3.metric("매수", f"{buy:,.0f} 원")
-        col4.metric("손절", f"{stop:,.0f} 원")
+        col2.metric("현재가", f"{latest['Close']:.2f}")
+        col3.metric("RSI", f"{latest['RSI']:.1f}")
+        col4.metric("추세", "상승" if latest['Close'] > latest['MA60'] else "하락")
 
-        st.markdown(report)
+        st.write("📍 판단 근거:", " / ".join(reasons))
+
+        if pullback:
+            st.success("📉 눌림목 구간")
+        if breakout:
+            st.success("🚀 돌파 발생")
+        if volume_spike:
+            st.info("📊 거래량 급증")
+
         st.plotly_chart(create_chart(df), use_container_width=True)
-
-# 실행
-if __name__ == "__main__":
-    main()
