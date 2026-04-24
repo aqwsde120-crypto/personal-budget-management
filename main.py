@@ -697,6 +697,33 @@ def evaluate_timing(df, prob):
         return "🤔 관망"
 
 # -----------------------------
+# 패턴 종합 감지 (🔥 필수)
+# -----------------------------
+def detect_all_patterns(df):
+    patterns = []
+
+    try:
+        if pattern_pullback_reversal(df):
+            patterns.append("📉 눌림목 반등")
+
+        if pattern_box_breakout(df):
+            patterns.append("🚀 박스 돌파")
+
+        if pattern_trend_reversal(df):
+            patterns.append("🎯 추세 전환")
+
+        if pattern_volume_surge(df):
+            patterns.append("🔥 거래량 폭발")
+
+        if pattern_trend_continuation(df):
+            patterns.append("📈 추세 지속")
+
+    except:
+        return []
+
+    return patterns
+
+# -----------------------------
 # 리스크 분석
 # -----------------------------
 def analyze_risk(df, market, supply_text):
