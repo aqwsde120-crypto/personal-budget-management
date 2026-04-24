@@ -497,6 +497,118 @@ def analyze(df):
     return opinion, reasons, latest, score
 
 # -----------------------------
+# 판단근거
+# -----------------------------
+def build_detailed_reasons(df, reasons, market, supply_status):
+    latest = df.iloc[-1]
+
+    explanations = []
+
+    # 1. 추세 해석
+    if "정배열" in reasons:
+        explanations.append("이동평균선이 MA20 > MA60 > MA120 순으로 정렬된 중장기 상승 추세로, 기관/외국인 매수 시 강한 추세 지속 가능성이 높습니다.")
+
+    if "역배열" in reasons:
+        explanations.append("이동평균선이 역배열 상태로 하락 추세가 지속되고 있으며, 단기 반등은 기술적 반등일 가능성이 큽니다.")
+
+    # 2. RSI 해석
+    if latest['RSI'] < 30:
+        explanations.append(f"RSI {latest['RSI']:.1f}로 과매도 구간이며, 단기 반등 가능성이 존재합니다.")
+    elif latest['RSI'] > 70:
+        explanations.append(f"RSI {latest['RSI']:.1f}로 과매수 상태이며, 단기 조정 가능성에 유의해야 합니다.")
+    else:
+        explanations.append(f"RSI {latest['RSI']:.1f}로 중립 구간이며 방향성 결정 구간입니다.")
+
+    # 3. MACD 해석
+    if latest['MACD'] > latest['MACD_Signal']:
+        explanations.append("MACD가 시그널선을 상향 돌파한 상태로 상승 모멘텀이 유입되고 있습니다.")
+    else:
+        explanations.append("MACD가 하락 상태로 모멘텀이 약화되고 있습니다.")
+
+    # 4. 거래량 해석
+    vol_recent = df['Volume'].iloc[-5:].mean()
+    vol_prev = df['Volume'].iloc[-20:-5].mean()
+
+    if vol_recent > vol_prev:
+        explanations.append("최근 거래량이 증가하며 수급 유입 신호가 나타나고 있습니다.")
+    else:
+        explanations.append("거래량이 감소하며 관망세가 이어지고 있습니다.")
+
+    # 5. 시장 환경
+    market_trend = get_market_trend(market)
+
+    if market_trend == "상승":
+        explanations.append("현재 시장 전체가 상승 흐름으로 개별 종목 상승 확률이 우호적인 환경입니다.")
+    else:
+        explanations.append("시장 전체가 약세 흐름으로 종목 상승 시에도 변동성 리스크가 존재합니다.")
+
+    # 6. 수급 해석
+    if supply_status == "매수":
+        explanations.append("외국인/기관 수급이 순매수로 전환되며 상승 추세 강화 가능성이 있습니다.")
+    elif supply_status == "매도":
+        explanations.append("외국인/기관 수급이 순매도 상태로 상승 시 저항 요인으로 작용할 수 있습니다.")
+    else:
+        explanations.append("수급 방향성이 뚜렷하지 않은 중립 상태입니다.")
+
+    return explanations
+
+# -----------------------------
+# 리포트
+# -----------------------------
+def generate_report(df, market, opinion, reasons, supply_text, prob):
+    latest = df.iloc[-1]
+
+    ret20, volume = get_momentum(df)
+    trend = "상승" if latest['Close'] > latest['MA60'] else "하락"
+
+    detailed = build_detailed_reasons(df, reasons, market, supply_text)
+
+    report = f"""
+## 📊 AI 종합 분석 리포트
+
+### 🎯 매수 확률
+👉 **{prob}%**
+
+---
+
+### 🌍 시장 환경
+- 시장 방향: {get_market_trend(market)}
+
+---
+
+### 🚀 모멘텀
+- 20일 수익률: {ret20:.2f}%
+- 거래량 흐름: {volume}
+
+---
+
+### 📈 기술적 분석
+- 추세: {trend}
+- RSI: {latest['RSI']:.1f}
+- MACD: {"상승" if latest['MACD'] > latest['MACD_Signal'] else "하락"}
+
+---
+
+### 💰 수급 분석
+- 상태: {supply_text}
+
+---
+
+### 📍 상세 판단 근거
+"""
+    for r in detailed:
+        report += f"- {r}\n"
+
+    report += f"""
+
+---
+
+### ✅ 최종 결론
+👉 **{opinion}**
+"""
+    return report
+
+# -----------------------------
 # 확률 계산
 # -----------------------------
 def calculate_probability(df, market, score, ticker):
@@ -585,8 +697,7 @@ if st.sidebar.button("📊 종목 분석"):
     col4.metric("손절가", f"{stop:.2f}")
     col5.metric("목표가", f"{target:.2f}")
 
-    st.write("📍 판단 근거:", " / ".join(reasons))
-    st.write("💰 수급 상태:", supply_text)
+    st.markdown(generate_report(df, market, opinion, reasons, supply_text, prob))
 
     st.plotly_chart(create_chart(df), use_container_width=True)
 
