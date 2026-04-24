@@ -351,9 +351,24 @@ US_TICKER_MAP = {
 # 데이터
 # -----------------------------
 def get_stock_data(ticker, market):
-    if market == "KR":
-        ticker = ticker + ".KS"
-    return yf.Ticker(ticker).history(period="6mo")
+
+    try:
+        if market == "KR":
+
+            # KOSPI 시도
+            df = yf.Ticker(ticker + ".KS").history(period="6mo")
+
+            if df.empty:
+                # KOSDAQ 재시도
+                df = yf.Ticker(ticker + ".KQ").history(period="6mo")
+
+        else:
+            df = yf.Ticker(ticker).history(period="6mo")
+
+        return df
+
+    except:
+        return None
 
 # -----------------------------
 # 지표
