@@ -553,6 +553,64 @@ def build_detailed_reasons(df, reasons, market, supply_status):
     return explanations
 
 # -----------------------------
+# 타이밍 판단
+# -----------------------------
+def evaluate_timing(df, prob):
+    latest = df.iloc[-1]
+
+    price = latest['Close']
+    ma20 = latest['MA20']
+    rsi = latest['RSI']
+
+    # 조건 기반 판단
+    if price > ma20 and 40 < rsi < 65 and prob >= 60:
+        return "✅ 지금 진입 적절 (추세 지속 구간)"
+
+    elif price > ma20 and rsi >= 70:
+        return "⚠️ 단기 과열 (눌림목 대기 추천)"
+
+    elif price < ma20 and prob >= 60:
+        return "⏳ 추세는 좋지만 눌림 필요"
+
+    elif prob < 50:
+        return "❌ 매수 타이밍 아님"
+
+    else:
+        return "🤔 관망 구간"
+
+# -----------------------------
+# 리스크 분석
+# -----------------------------
+def analyze_risk(df, market, supply_text):
+    latest = df.iloc[-1]
+    risks = []
+
+    # 1. 과매수 리스크
+    if latest['RSI'] > 70:
+        risks.append("RSI 과매수 구간으로 단기 조정 가능성")
+
+    # 2. 시장 리스크
+    if get_market_trend(market) == "하락":
+        risks.append("시장 전체 약세로 개별 종목 상승 제한 가능성")
+
+    # 3. 수급 리스크
+    if "매도" in supply_text:
+        risks.append("외국인/기관 매도 지속으로 상승 제한 가능성")
+
+    # 4. 거래량 감소
+    vol_recent = df['Volume'].iloc[-5:].mean()
+    vol_prev = df['Volume'].iloc[-20:-5].mean()
+
+    if vol_recent < vol_prev:
+        risks.append("거래량 감소 → 상승 동력 부족")
+
+    # 5. 추세 붕괴
+    if latest['Close'] < latest['MA60']:
+        risks.append("중기 추세 이탈 가능성")
+
+    return risks[:3]  # TOP3만
+
+# -----------------------------
 # 리포트
 # -----------------------------
 def generate_report(df, market, opinion, reasons, supply_text, prob):
@@ -563,11 +621,19 @@ def generate_report(df, market, opinion, reasons, supply_text, prob):
 
     detailed = build_detailed_reasons(df, reasons, market, supply_text)
 
+    timing = evaluate_timing(df, prob)
+    risks = analyze_risk(df, market, supply_text)
+
     report = f"""
 ## 📊 AI 종합 분석 리포트
 
 ### 🎯 매수 확률
 👉 **{prob}%**
+
+---
+
+### ⏰ 진입 타이밍
+👉 {timing}
 
 ---
 
@@ -598,6 +664,14 @@ def generate_report(df, market, opinion, reasons, supply_text, prob):
 """
     for r in detailed:
         report += f"- {r}\n"
+
+    report += "\n---\n### ⚠️ 리스크 요인 TOP3\n"
+
+    if risks:
+        for r in risks:
+            report += f"- {r}\n"
+    else:
+        report += "- 특별한 리스크 없음\n"
 
     report += f"""
 
