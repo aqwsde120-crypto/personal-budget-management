@@ -2,6 +2,8 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
+import FinanceDataReader as fdr
+from datetime import datetime, timedelta
 from plotly.subplots import make_subplots
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
@@ -110,7 +112,6 @@ KR_TICKER_MAP = {
 "롯데쇼핑": "023530",
 "BGF리테일": "282330",
 "GS리테일": "007070",
-"쿠팡": "CPNG",
 
 # ======================
 # 건설 / 인프라
@@ -163,7 +164,6 @@ KR_TICKER_MAP = {
 # 기타 성장주
 # ======================
 "두산에너빌리티": "034020",
-"LS ELECTRIC": "010120",
 "한화에어로스페이스": "012450",
 "LIG넥스원": "079550",
 "현대로템": "064350",
@@ -354,13 +354,10 @@ def get_stock_data(ticker, market):
 
     try:
         if market == "KR":
+            end = datetime.now()
+            start = end - timedelta(days=180)
 
-            # KOSPI 시도
-            df = yf.Ticker(ticker + ".KS").history(period="6mo")
-
-            if df.empty:
-                # KOSDAQ 재시도
-                df = yf.Ticker(ticker + ".KQ").history(period="6mo")
+            df = fdr.DataReader(ticker, start, end)
 
         else:
             df = yf.Ticker(ticker).history(period="6mo")
@@ -531,12 +528,15 @@ ticker = stock_dict[selected]
 # -----------------------------
 if st.sidebar.button("분석 실행"):
 
+    st.write("DEBUG:", ticker, market)
+
     df = get_stock_data(ticker, market)
 
     if df is None or df.empty:
-        st.error("데이터 불러오기 실패")
-    else:
-        df = calc_indicators(df)
+        st.error("❌ 데이터 불러오기 실패 (티커 확인 필요)")
+        st.stop()
+
+    df = calc_indicators(df)
 
         opinion, reasons, latest, pullback, breakout, volume_spike = analyze(df)
 
