@@ -505,7 +505,7 @@ def build_detailed_reasons(df, reasons, market, supply_status):
     explanations = []
 
     # 1. 추세 해석
-    if "정배열" in reasons:
+    if "중장기 상승 추세" in reasons:
         explanations.append("이동평균선이 MA20 > MA60 > MA120 순으로 정렬된 중장기 상승 추세로, 기관/외국인 매수 시 강한 추세 지속 가능성이 높습니다.")
 
     if "역배열" in reasons:
