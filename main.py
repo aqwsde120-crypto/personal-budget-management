@@ -13,7 +13,7 @@ st.set_page_config(page_title="AI 주식 통합 진단", layout="wide")
 st.title("📈 AI 주식 통합 진단")
 
 # -----------------------------
-# 종목 리스트
+# 종목 리스트 (샘플)
 # -----------------------------
 KR_TICKER_MAP = {
 
@@ -349,7 +349,7 @@ US_TICKER_MAP = {
 }
 
 # -----------------------------
-# 데이터 (캐싱)
+# 데이터
 # -----------------------------
 @st.cache_data(ttl=600)
 def get_stock_data(ticker, market):
@@ -365,6 +365,32 @@ def get_stock_data(ticker, market):
         return None
 
 # -----------------------------
+# 시장 분석
+# -----------------------------
+def get_market_trend(market):
+    try:
+        index = "^KS11" if market == "KR" else "^GSPC"
+        df = yf.Ticker(index).history(period="3mo")
+        ma20 = df['Close'].rolling(20).mean().iloc[-1]
+        latest = df['Close'].iloc[-1]
+        return "상승" if latest > ma20 else "하락"
+    except:
+        return "확인불가"
+
+# -----------------------------
+# 모멘텀
+# -----------------------------
+def get_momentum(df):
+    latest = df.iloc[-1]
+    ret20 = (latest['Close'] / df['Close'].iloc[-20] - 1) * 100
+
+    vol_recent = df['Volume'].iloc[-5:].mean()
+    vol_prev = df['Volume'].iloc[-20:-5].mean()
+    volume_trend = "증가" if vol_recent > vol_prev else "감소"
+
+    return ret20, volume_trend
+
+# -----------------------------
 # 지표
 # -----------------------------
 def calc_indicators(df):
@@ -378,12 +404,7 @@ def calc_indicators(df):
     df['MACD'] = macd.macd()
     df['MACD_Signal'] = macd.macd_signal()
 
-    atr = AverageTrueRange(
-        high=df['High'],
-        low=df['Low'],
-        close=df['Close'],
-        window=14
-    )
+    atr = AverageTrueRange(df['High'], df['Low'], df['Close'])
     df['ATR'] = atr.average_true_range()
 
     return df
@@ -393,18 +414,15 @@ def calc_indicators(df):
 # -----------------------------
 def detect_pullback(df):
     latest = df.iloc[-1]
-    cond1 = latest['Close'] > latest['MA60']
-    cond2 = abs((latest['Close'] - latest['MA20']) / latest['MA20']) < 0.03
-    vol_recent = df['Volume'].iloc[-5:].mean()
-    vol_prev = df['Volume'].iloc[-20:-5].mean()
-    return cond1 and cond2 and vol_recent < vol_prev
+    return (
+        latest['Close'] > latest['MA60'] and
+        abs((latest['Close'] - latest['MA20']) / latest['MA20']) < 0.03
+    )
 
 def detect_breakout(df):
     latest = df.iloc[-1]
     high_20 = df['High'].iloc[-20:-1].max()
-    vol_recent = df['Volume'].iloc[-3:].mean()
-    vol_prev = df['Volume'].iloc[-20:-3].mean()
-    return (latest['Close'] > high_20) and (vol_recent > vol_prev * 1.5)
+    return latest['Close'] > high_20
 
 def detect_volume_spike(df):
     return df['Volume'].iloc[-1] > df['Volume'].iloc[-20:-1].mean() * 2
@@ -414,21 +432,12 @@ def detect_volume_spike(df):
 # -----------------------------
 def analyze(df):
     latest = df.iloc[-1]
-
     score = 0
     reasons = []
 
-    close = latest['Close']
-    ma20 = latest['MA20']
-    ma60 = latest['MA60']
-    ma120 = latest['MA120']
-
-    if close > ma20 > ma60 > ma120:
+    if latest['Close'] > latest['MA20'] > latest['MA60'] > latest['MA120']:
         score += 3
         reasons.append("정배열")
-    elif close < ma20 < ma60 < ma120:
-        score -= 3
-        reasons.append("역배열")
 
     if latest['RSI'] < 30:
         score += 2
@@ -440,21 +449,16 @@ def analyze(df):
     if latest['MACD'] > latest['MACD_Signal']:
         score += 1
         reasons.append("MACD 상승")
-    else:
-        score -= 1
-        reasons.append("MACD 하락")
 
-    pullback = detect_pullback(df)
-    breakout = detect_breakout(df)
-    volume_spike = detect_volume_spike(df)
-
-    if pullback:
+    if detect_pullback(df):
         score += 2
         reasons.append("눌림목")
-    if breakout:
+
+    if detect_breakout(df):
         score += 3
         reasons.append("돌파")
-    if volume_spike:
+
+    if detect_volume_spike(df):
         score += 1
         reasons.append("거래량 급증")
 
@@ -467,68 +471,84 @@ def analyze(df):
     else:
         opinion = "🔴 매도"
 
-    return opinion, reasons, latest, pullback, breakout, volume_spike
+    return opinion, reasons, latest
 
 # -----------------------------
-# ATR 기반 가격
+# ATR 가격
 # -----------------------------
 def calc_trade_levels(df):
     latest = df.iloc[-1]
     price = latest['Close']
     atr = latest['ATR']
 
-    stop_loss = price - (atr * 1.5)
-    take_profit = price + (atr * 2.5)
+    stop = price - atr * 1.5
+    target = price + atr * 2.5
 
-    return price, stop_loss, take_profit
+    return price, stop, target
+
+# -----------------------------
+# 리포트
+# -----------------------------
+def generate_report(df, market, opinion, reasons):
+    latest = df.iloc[-1]
+
+    market_trend = get_market_trend(market)
+    ret20, volume = get_momentum(df)
+
+    trend = "상승" if latest['Close'] > latest['MA60'] else "하락"
+
+    report = f"""
+### 📊 종합 분석
+
+🌍 시장: {market_trend}
+
+🚀 모멘텀
+- 20일 수익률: {ret20:.2f}%
+- 거래량: {volume}
+
+📈 기술
+- 추세: {trend}
+- RSI: {latest['RSI']:.1f}
+- MACD: {"상승" if latest['MACD'] > latest['MACD_Signal'] else "하락"}
+
+📍 근거
+- {' / '.join(reasons)}
+
+👉 결론: **{opinion}**
+"""
+    return report
 
 # -----------------------------
 # 스캐너
 # -----------------------------
 def scan_stocks(stock_dict, market):
-
     results = []
 
     for name, ticker in stock_dict.items():
-
         df = get_stock_data(ticker, market)
-
-        if df is None or df.empty or len(df) < 120:
+        if df is None or len(df) < 120:
             continue
 
         df = calc_indicators(df)
 
         try:
-            opinion, reasons, latest, pullback, breakout, volume_spike = analyze(df)
-
-            price = latest['Close']
-            atr = latest['ATR']
-
-            stop_loss = price - (atr * 1.5)
-            take_profit = price + (atr * 2.5)
-
-            score = len(reasons)
+            opinion, reasons, latest = analyze(df)
 
             if "매수" in opinion:
+                price, stop, target = calc_trade_levels(df)
+
                 results.append({
                     "종목": name,
                     "의견": opinion,
                     "현재가": round(price, 2),
-                    "손절가": round(stop_loss, 2),
-                    "목표가": round(take_profit, 2),
-                    "점수": score,
+                    "손절가": round(stop, 2),
+                    "목표가": round(target, 2),
                     "근거": ", ".join(reasons)
                 })
-
         except:
             continue
 
-    df_result = pd.DataFrame(results)
-
-    if not df_result.empty:
-        df_result = df_result.sort_values(by="점수", ascending=False)
-
-    return df_result
+    return pd.DataFrame(results)
 
 # -----------------------------
 # 차트
@@ -546,7 +566,6 @@ def create_chart(df):
 
     fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name="MA20"))
     fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], name="MA60"))
-    fig.add_trace(go.Scatter(x=df.index, y=df['MA120'], name="MA120"))
 
     fig.add_trace(go.Bar(x=df.index, y=df['Volume']), row=2, col=1)
 
@@ -565,29 +584,28 @@ selected = st.sidebar.selectbox("종목 선택", filtered)
 ticker = stock_dict[selected]
 
 # -----------------------------
-# 단일 종목 분석
+# 단일 분석
 # -----------------------------
 if st.sidebar.button("📊 종목 분석"):
 
     df = get_stock_data(ticker, market)
 
     if df is None or df.empty:
-        st.error("❌ 데이터 불러오기 실패")
+        st.error("데이터 없음")
         st.stop()
 
     df = calc_indicators(df)
 
-    opinion, reasons, latest, pullback, breakout, volume_spike = analyze(df)
-    price, stop_loss, take_profit = calc_trade_levels(df)
+    opinion, reasons, latest = analyze(df)
+    price, stop, target = calc_trade_levels(df)
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("투자 의견", opinion)
+    col1.metric("의견", opinion)
     col2.metric("현재가", f"{price:.2f}")
-    col3.metric("손절가", f"{stop_loss:.2f}")
-    col4.metric("목표가", f"{take_profit:.2f}")
+    col3.metric("손절가", f"{stop:.2f}")
+    col4.metric("목표가", f"{target:.2f}")
 
-    st.write("📍 판단 근거:", " / ".join(reasons))
-
+    st.markdown(generate_report(df, market, opinion, reasons))
     st.plotly_chart(create_chart(df), use_container_width=True)
 
 # -----------------------------
@@ -595,12 +613,11 @@ if st.sidebar.button("📊 종목 분석"):
 # -----------------------------
 if st.sidebar.button("🔥 매수 후보 스캔"):
 
-    st.write("📊 스캔 중...")
+    st.write("스캔 중...")
 
-    result_df = scan_stocks(stock_dict, market)
+    result = scan_stocks(stock_dict, market)
 
-    if result_df.empty:
-        st.warning("매수 후보 없음")
+    if result.empty:
+        st.warning("후보 없음")
     else:
-        st.success(f"매수 후보 {len(result_df)}개 발견")
-        st.dataframe(result_df, use_container_width=True)
+        st.dataframe(result, use_container_width=True)
