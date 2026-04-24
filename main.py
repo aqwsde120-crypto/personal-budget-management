@@ -7,12 +7,13 @@ from datetime import datetime, timedelta
 from plotly.subplots import make_subplots
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
+from ta.volatility import AverageTrueRange
 
 st.set_page_config(page_title="AI 주식 통합 진단", layout="wide")
 st.title("📈 AI 주식 통합 진단")
 
 # -----------------------------
-# 🇰🇷 한국 종목 (섹터)
+# 종목 리스트
 # -----------------------------
 KR_TICKER_MAP = {
 
@@ -348,22 +349,18 @@ US_TICKER_MAP = {
 }
 
 # -----------------------------
-# 데이터
+# 데이터 (캐싱)
 # -----------------------------
+@st.cache_data(ttl=600)
 def get_stock_data(ticker, market):
-
     try:
         if market == "KR":
             end = datetime.now()
             start = end - timedelta(days=180)
-
             df = fdr.DataReader(ticker, start, end)
-
         else:
             df = yf.Ticker(ticker).history(period="6mo")
-
         return df
-
     except:
         return None
 
@@ -381,37 +378,34 @@ def calc_indicators(df):
     df['MACD'] = macd.macd()
     df['MACD_Signal'] = macd.macd_signal()
 
+    atr = AverageTrueRange(
+        high=df['High'],
+        low=df['Low'],
+        close=df['Close'],
+        window=14
+    )
+    df['ATR'] = atr.average_true_range()
+
     return df
 
 # -----------------------------
-# 눌림목
+# 신호
 # -----------------------------
 def detect_pullback(df):
     latest = df.iloc[-1]
-
     cond1 = latest['Close'] > latest['MA60']
     cond2 = abs((latest['Close'] - latest['MA20']) / latest['MA20']) < 0.03
-
     vol_recent = df['Volume'].iloc[-5:].mean()
     vol_prev = df['Volume'].iloc[-20:-5].mean()
-
     return cond1 and cond2 and vol_recent < vol_prev
 
-# -----------------------------
-# 돌파
-# -----------------------------
 def detect_breakout(df):
     latest = df.iloc[-1]
     high_20 = df['High'].iloc[-20:-1].max()
-
     vol_recent = df['Volume'].iloc[-3:].mean()
     vol_prev = df['Volume'].iloc[-20:-3].mean()
-
     return (latest['Close'] > high_20) and (vol_recent > vol_prev * 1.5)
 
-# -----------------------------
-# 거래량 급증
-# -----------------------------
 def detect_volume_spike(df):
     return df['Volume'].iloc[-1] > df['Volume'].iloc[-20:-1].mean() * 2
 
@@ -419,7 +413,6 @@ def detect_volume_spike(df):
 # 분석
 # -----------------------------
 def analyze(df):
-
     latest = df.iloc[-1]
 
     score = 0
@@ -430,7 +423,6 @@ def analyze(df):
     ma60 = latest['MA60']
     ma120 = latest['MA120']
 
-    # 추세
     if close > ma20 > ma60 > ma120:
         score += 3
         reasons.append("정배열")
@@ -438,7 +430,6 @@ def analyze(df):
         score -= 3
         reasons.append("역배열")
 
-    # RSI
     if latest['RSI'] < 30:
         score += 2
         reasons.append("과매도")
@@ -446,7 +437,6 @@ def analyze(df):
         score -= 2
         reasons.append("과매수")
 
-    # MACD
     if latest['MACD'] > latest['MACD_Signal']:
         score += 1
         reasons.append("MACD 상승")
@@ -454,7 +444,6 @@ def analyze(df):
         score -= 1
         reasons.append("MACD 하락")
 
-    # 실전 신호
     pullback = detect_pullback(df)
     breakout = detect_breakout(df)
     volume_spike = detect_volume_spike(df)
@@ -462,16 +451,13 @@ def analyze(df):
     if pullback:
         score += 2
         reasons.append("눌림목")
-
     if breakout:
         score += 3
         reasons.append("돌파")
-
     if volume_spike:
         score += 1
         reasons.append("거래량 급증")
 
-    # 판단
     if score >= 5:
         opinion = "🟢 강력 매수"
     elif score >= 3:
@@ -482,6 +468,67 @@ def analyze(df):
         opinion = "🔴 매도"
 
     return opinion, reasons, latest, pullback, breakout, volume_spike
+
+# -----------------------------
+# ATR 기반 가격
+# -----------------------------
+def calc_trade_levels(df):
+    latest = df.iloc[-1]
+    price = latest['Close']
+    atr = latest['ATR']
+
+    stop_loss = price - (atr * 1.5)
+    take_profit = price + (atr * 2.5)
+
+    return price, stop_loss, take_profit
+
+# -----------------------------
+# 스캐너
+# -----------------------------
+def scan_stocks(stock_dict, market):
+
+    results = []
+
+    for name, ticker in stock_dict.items():
+
+        df = get_stock_data(ticker, market)
+
+        if df is None or df.empty or len(df) < 120:
+            continue
+
+        df = calc_indicators(df)
+
+        try:
+            opinion, reasons, latest, pullback, breakout, volume_spike = analyze(df)
+
+            price = latest['Close']
+            atr = latest['ATR']
+
+            stop_loss = price - (atr * 1.5)
+            take_profit = price + (atr * 2.5)
+
+            score = len(reasons)
+
+            if "매수" in opinion:
+                results.append({
+                    "종목": name,
+                    "의견": opinion,
+                    "현재가": round(price, 2),
+                    "손절가": round(stop_loss, 2),
+                    "목표가": round(take_profit, 2),
+                    "점수": score,
+                    "근거": ", ".join(reasons)
+                })
+
+        except:
+            continue
+
+    df_result = pd.DataFrame(results)
+
+    if not df_result.empty:
+        df_result = df_result.sort_values(by="점수", ascending=False)
+
+    return df_result
 
 # -----------------------------
 # 차트
@@ -497,9 +544,9 @@ def create_chart(df):
         close=df['Close']
     ), row=1, col=1)
 
-    fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name="MA20"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], name="MA60"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['MA120'], name="MA120"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name="MA20"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], name="MA60"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['MA120'], name="MA120"))
 
     fig.add_trace(go.Bar(x=df.index, y=df['Volume']), row=2, col=1)
 
@@ -509,50 +556,51 @@ def create_chart(df):
 # UI
 # -----------------------------
 market = st.sidebar.selectbox("시장", ["KR", "US"])
-
-if market == "KR":
-    stock_dict = KR_TICKER_MAP
-else:
-    stock_dict = US_TICKER_MAP
+stock_dict = KR_TICKER_MAP if market == "KR" else US_TICKER_MAP
 
 search = st.sidebar.text_input("종목 검색")
-
 filtered = [k for k in stock_dict if search in k] if search else list(stock_dict.keys())
 
 selected = st.sidebar.selectbox("종목 선택", filtered)
-
 ticker = stock_dict[selected]
 
 # -----------------------------
-# 실행
+# 단일 종목 분석
 # -----------------------------
-if st.sidebar.button("분석 실행"):
-
-    st.write("DEBUG:", ticker, market)
+if st.sidebar.button("📊 종목 분석"):
 
     df = get_stock_data(ticker, market)
 
     if df is None or df.empty:
-        st.error("❌ 데이터 불러오기 실패 (티커 확인 필요)")
+        st.error("❌ 데이터 불러오기 실패")
         st.stop()
 
     df = calc_indicators(df)
 
-        opinion, reasons, latest, pullback, breakout, volume_spike = analyze(df)
+    opinion, reasons, latest, pullback, breakout, volume_spike = analyze(df)
+    price, stop_loss, take_profit = calc_trade_levels(df)
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("투자 의견", opinion)
-        col2.metric("현재가", f"{latest['Close']:.2f}")
-        col3.metric("RSI", f"{latest['RSI']:.1f}")
-        col4.metric("추세", "상승" if latest['Close'] > latest['MA60'] else "하락")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("투자 의견", opinion)
+    col2.metric("현재가", f"{price:.2f}")
+    col3.metric("손절가", f"{stop_loss:.2f}")
+    col4.metric("목표가", f"{take_profit:.2f}")
 
-        st.write("📍 판단 근거:", " / ".join(reasons))
+    st.write("📍 판단 근거:", " / ".join(reasons))
 
-        if pullback:
-            st.success("📉 눌림목 구간")
-        if breakout:
-            st.success("🚀 돌파 발생")
-        if volume_spike:
-            st.info("📊 거래량 급증")
+    st.plotly_chart(create_chart(df), use_container_width=True)
 
-        st.plotly_chart(create_chart(df), use_container_width=True)
+# -----------------------------
+# 스캐너
+# -----------------------------
+if st.sidebar.button("🔥 매수 후보 스캔"):
+
+    st.write("📊 스캔 중...")
+
+    result_df = scan_stocks(stock_dict, market)
+
+    if result_df.empty:
+        st.warning("매수 후보 없음")
+    else:
+        st.success(f"매수 후보 {len(result_df)}개 발견")
+        st.dataframe(result_df, use_container_width=True)
