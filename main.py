@@ -499,15 +499,14 @@ def create_chart(df):
 market = st.sidebar.selectbox("시장", ["KR", "US"])
 
 if market == "KR":
-    sector = st.sidebar.selectbox("섹터", list(KR_STOCKS.keys()))
-    stock_dict = KR_STOCKS[sector]
+    stock_dict = KR_TICKER_MAP
 else:
-    sector = st.sidebar.selectbox("섹터", list(US_STOCKS.keys()))
-    stock_dict = US_STOCKS[sector]
+    stock_dict = US_TICKER_MAP
 
 search = st.sidebar.text_input("종목 검색")
 
 filtered = [k for k in stock_dict if search in k] if search else list(stock_dict.keys())
+
 selected = st.sidebar.selectbox("종목 선택", filtered)
 
 ticker = stock_dict[selected]
