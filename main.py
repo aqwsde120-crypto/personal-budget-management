@@ -893,6 +893,13 @@ stock_dict = KR_TICKER_MAP if market == "KR" else US_TICKER_MAP
 selected = st.sidebar.selectbox("종목 선택", list(stock_dict.keys()))
 ticker = stock_dict[selected]
 
+detailed = build_detailed_reasons(df, reasons, patterns, market, supply_text)
+
+st.markdown("### 📍 상세 분석")
+
+for d in detailed:
+    st.write(f"- {d}")
+
 # -----------------------------
 # 실행
 # -----------------------------
