@@ -468,6 +468,18 @@ def detect_pullback(df):
 
     return cond1 and cond2 and cond3 and cond4 and cond5
 
+def pattern_pullback_reversal(df):
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    cond1 = latest['Close'] > latest['MA60']
+    cond2 = latest['MA20'] > latest['MA60']
+    cond3 = prev['Close'] > latest['Close']  # 조정 발생
+    cond4 = latest['Close'] > latest['MA20'] * 0.97
+    cond5 = latest['Volume'] > df['Volume'].iloc[-5:].mean()
+
+    return cond1 and cond2 and cond3 and cond4 and cond5
+
 def detect_breakout(df):
     latest = df.iloc[-1]
 
@@ -477,6 +489,47 @@ def detect_breakout(df):
     cond1 = latest['Close'] > high  # 고점 돌파
     cond2 = latest['Volume'] > avg_vol * 1.5  # 거래량 동반
     cond3 = latest['Close'] > latest['Open']  # 양봉 마감
+
+    return cond1 and cond2 and cond3
+
+def pattern_box_breakout(df):
+    latest = df.iloc[-1]
+
+    high = df['High'].iloc[-20:-1].max()
+    avg_vol = df['Volume'].iloc[-20:-1].mean()
+
+    cond1 = latest['Close'] > high
+    cond2 = latest['Volume'] > avg_vol * 1.5
+    cond3 = latest['Close'] > latest['Open']
+
+    return cond1 and cond2 and cond3
+
+def pattern_trend_reversal(df):
+    latest = df.iloc[-1]
+
+    cond1 = latest['MA20'] > latest['MA60']
+    cond2 = df['MA20'].iloc[-2] < df['MA60'].iloc[-2]  # 골든크로스 발생
+    cond3 = latest['RSI'] > 50
+
+    return cond1 and cond2 and cond3
+
+def pattern_volume_surge(df):
+    latest = df.iloc[-1]
+
+    avg_vol = df['Volume'].iloc[-20:-1].mean()
+
+    cond1 = latest['Volume'] > avg_vol * 2
+    cond2 = latest['Close'] > latest['Open']
+    cond3 = (latest['Close'] - latest['Open']) / latest['Open'] > 0.03
+
+    return cond1 and cond2 and cond3
+
+def pattern_trend_continuation(df):
+    latest = df.iloc[-1]
+
+    cond1 = latest['Close'] > latest['MA20'] > latest['MA60']
+    cond2 = latest['RSI'] > 45 and latest['RSI'] < 65
+    cond3 = abs(latest['Close'] - latest['MA20']) / latest['MA20'] < 0.02
 
     return cond1 and cond2 and cond3
 
@@ -532,56 +585,82 @@ def analyze(df):
 # -----------------------------
 # 판단근거
 # -----------------------------
-def build_detailed_reasons(df, reasons, market, supply_status):
+def build_detailed_reasons(df, reasons, patterns, market, supply_status):
     latest = df.iloc[-1]
-
     explanations = []
 
-    # 1. 추세 해석
+    # -----------------------------
+    # 1. 추세
+    # -----------------------------
     if "중장기 상승 추세" in reasons:
-        explanations.append("이동평균선이 MA20 > MA60 > MA120 순으로 정렬된 중장기 상승 추세로, 기관/외국인 매수 시 강한 추세 지속 가능성이 높습니다.")
+        explanations.append("이동평균선 정배열 상태로 중장기 상승 추세가 유지되고 있습니다.")
 
-    if "역배열" in reasons:
-        explanations.append("이동평균선이 역배열 상태로 하락 추세가 지속되고 있으며, 단기 반등은 기술적 반등일 가능성이 큽니다.")
-
-    # 2. RSI 해석
+    # -----------------------------
+    # 2. RSI
+    # -----------------------------
     if latest['RSI'] < 30:
-        explanations.append(f"RSI {latest['RSI']:.1f}로 과매도 구간이며, 단기 반등 가능성이 존재합니다.")
+        explanations.append(f"RSI {latest['RSI']:.1f} → 과매도 구간 (반등 가능성)")
     elif latest['RSI'] > 70:
-        explanations.append(f"RSI {latest['RSI']:.1f}로 과매수 상태이며, 단기 조정 가능성에 유의해야 합니다.")
+        explanations.append(f"RSI {latest['RSI']:.1f} → 과매수 구간 (조정 가능성)")
     else:
-        explanations.append(f"RSI {latest['RSI']:.1f}로 중립 구간이며 방향성 결정 구간입니다.")
+        explanations.append(f"RSI {latest['RSI']:.1f} → 중립 구간")
 
-    # 3. MACD 해석
+    # -----------------------------
+    # 3. MACD
+    # -----------------------------
     if latest['MACD'] > latest['MACD_Signal']:
-        explanations.append("MACD가 시그널선을 상향 돌파한 상태로 상승 모멘텀이 유입되고 있습니다.")
+        explanations.append("MACD 상승 전환 → 모멘텀 유입")
     else:
-        explanations.append("MACD가 하락 상태로 모멘텀이 약화되고 있습니다.")
+        explanations.append("MACD 하락 상태 → 모멘텀 약화")
 
-    # 4. 거래량 해석
+    # -----------------------------
+    # 4. 거래량
+    # -----------------------------
     vol_recent = df['Volume'].iloc[-5:].mean()
     vol_prev = df['Volume'].iloc[-20:-5].mean()
 
     if vol_recent > vol_prev:
-        explanations.append("최근 거래량이 증가하며 수급 유입 신호가 나타나고 있습니다.")
+        explanations.append("거래량 증가 → 수급 유입")
     else:
-        explanations.append("거래량이 감소하며 관망세가 이어지고 있습니다.")
+        explanations.append("거래량 감소 → 관망세")
 
-    # 5. 시장 환경
+    # -----------------------------
+    # 5. 패턴 (🔥 핵심 추가)
+    # -----------------------------
+    if "📉 눌림목 반등" in patterns:
+        explanations.append("상승 추세 중 눌림목 → 저점 매수 기회")
+
+    if "🚀 박스 돌파" in patterns:
+        explanations.append("박스권 돌파 → 강한 상승 시작 가능성")
+
+    if "📈 추세 지속" in patterns:
+        explanations.append("추세 유지 구간 → 지속 상승 가능")
+
+    if "🔥 거래량 폭발" in patterns:
+        explanations.append("거래량 급증 → 세력 진입 신호")
+
+    if "🎯 추세 전환" in patterns:
+        explanations.append("하락 → 상승 전환 초입 구간")
+
+    # -----------------------------
+    # 6. 시장
+    # -----------------------------
     market_trend = get_market_trend(market)
 
     if market_trend == "상승":
-        explanations.append("현재 시장 전체가 상승 흐름으로 개별 종목 상승 확률이 우호적인 환경입니다.")
+        explanations.append("시장 상승 환경 → 종목 상승 확률 증가")
     else:
-        explanations.append("시장 전체가 약세 흐름으로 종목 상승 시에도 변동성 리스크가 존재합니다.")
+        explanations.append("시장 약세 → 변동성 주의")
 
-    # 6. 수급 해석
-    if supply_status == "매수":
-        explanations.append("외국인/기관 수급이 순매수로 전환되며 상승 추세 강화 가능성이 있습니다.")
-    elif supply_status == "매도":
-        explanations.append("외국인/기관 수급이 순매도 상태로 상승 시 저항 요인으로 작용할 수 있습니다.")
-    else:
-        explanations.append("수급 방향성이 뚜렷하지 않은 중립 상태입니다.")
+    # -----------------------------
+    # 7. 수급
+    # -----------------------------
+    if "강한 매수" in supply_status:
+        explanations.append("기관/외국인 강한 순매수 → 상승 지속 가능")
+    elif "순매수" in supply_status:
+        explanations.append("수급 유입 중")
+    elif "매도" in supply_status:
+        explanations.append("수급 이탈 → 상승 제한 가능")
 
     return explanations
 
@@ -589,18 +668,33 @@ def build_detailed_reasons(df, reasons, market, supply_status):
 # 타이밍 판단
 # -----------------------------
 def evaluate_timing(df, prob):
+    patterns = detect_all_patterns(df)
 
-    if detect_breakout(df) and prob >= 60:
-        return "🚀 돌파 매수 타이밍 (추세 가속 구간)"
+    # 🔥 복합 시그널 (핵심)
+    if "🚀 박스 돌파" in patterns and "🔥 거래량 폭발" in patterns:
+        return "🚀🔥 초강력 돌파 매수"
 
-    elif detect_pullback(df) and prob >= 60:
-        return "📉 눌림목 매수 타이밍 (저점 공략)"
+    if "📉 눌림목 반등" in patterns and "📈 추세 지속" in patterns:
+        return "📉📈 최적 눌림목 매수"
+
+    # 기존 로직 유지
+    if "🚀 박스 돌파" in patterns:
+        return "🚀 강한 돌파 매수"
+
+    elif "📉 눌림목 반등" in patterns:
+        return "📉 눌림목 매수"
+
+    elif "📈 추세 지속" in patterns:
+        return "📈 추세 추종 매수"
+
+    elif "🔥 거래량 폭발" in patterns:
+        return "🔥 초기 급등 포착 (단타)"
 
     elif prob >= 70:
-        return "⏳ 좋은 종목, 눌림 or 돌파 대기"
+        return "⏳ 좋은 종목, 대기"
 
     else:
-        return "🤔 관망 구간"
+        return "🤔 관망"
 
 # -----------------------------
 # 리스크 분석
@@ -643,7 +737,8 @@ def generate_report(df, market, opinion, reasons, supply_text, prob):
     ret20, volume = get_momentum(df)
     trend = "상승" if latest['Close'] > latest['MA60'] else "하락"
 
-    detailed = build_detailed_reasons(df, reasons, market, supply_text)
+    patterns = detect_all_patterns(df)
+    detailed = build_detailed_reasons(df, reasons, patterns, market, supply_text)
 
     timing = evaluate_timing(df, prob)
     risks = analyze_risk(df, market, supply_text)
@@ -772,7 +867,7 @@ selected = st.sidebar.selectbox("종목 선택", list(stock_dict.keys()))
 ticker = stock_dict[selected]
 
 # -----------------------------
-# 단일 분석
+# 실행
 # -----------------------------
 if st.sidebar.button("📊 종목 분석"):
 
@@ -785,7 +880,13 @@ if st.sidebar.button("📊 종목 분석"):
     df = calc_indicators(df)
 
     opinion, reasons, latest, score = analyze(df)
+
+    patterns = detect_all_patterns(df)
+
     prob, supply_text = calculate_probability(df, market, score, ticker)
+
+    timing = evaluate_timing(df, prob)
+
     price, stop, target = calc_trade_levels(df)
 
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -795,7 +896,10 @@ if st.sidebar.button("📊 종목 분석"):
     col4.metric("손절가", f"{stop:.2f}")
     col5.metric("목표가", f"{target:.2f}")
 
-    st.markdown(generate_report(df, market, opinion, reasons, supply_text, prob))
+    st.markdown("### 📍 감지된 패턴")
+    st.write(", ".join(patterns) if patterns else "없음")
+
+    st.markdown(f"### ⏰ 타이밍\n👉 {timing}")
 
     st.plotly_chart(create_chart(df), use_container_width=True)
 
