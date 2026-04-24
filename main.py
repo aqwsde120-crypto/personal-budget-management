@@ -458,15 +458,27 @@ def calc_indicators(df):
 # -----------------------------
 def detect_pullback(df):
     latest = df.iloc[-1]
-    return (
-        latest['Close'] > latest['MA60'] and
-        abs((latest['Close'] - latest['MA20']) / latest['MA20']) < 0.03
-    )
+    prev = df.iloc[-2]
+
+    cond1 = latest['Close'] > latest['MA60']  # 상승 추세 유지
+    cond2 = latest['MA20'] > latest['MA60']   # 정배열
+    cond3 = prev['Close'] > latest['Close']   # 단기 조정 발생
+    cond4 = abs((latest['Close'] - latest['MA20']) / latest['MA20']) < 0.03
+    cond5 = latest['Volume'] < df['Volume'].iloc[-20:-1].mean()  # 거래량 감소
+
+    return cond1 and cond2 and cond3 and cond4 and cond5
 
 def detect_breakout(df):
     latest = df.iloc[-1]
+
     high = df['High'].iloc[-20:-1].max()
-    return latest['Close'] > high
+    avg_vol = df['Volume'].iloc[-20:-1].mean()
+
+    cond1 = latest['Close'] > high  # 고점 돌파
+    cond2 = latest['Volume'] > avg_vol * 1.5  # 거래량 동반
+    cond3 = latest['Close'] > latest['Open']  # 양봉 마감
+
+    return cond1 and cond2 and cond3
 
 def detect_volume_spike(df):
     return df['Volume'].iloc[-1] > df['Volume'].iloc[-20:-1].mean() * 2
@@ -577,24 +589,15 @@ def build_detailed_reasons(df, reasons, market, supply_status):
 # 타이밍 판단
 # -----------------------------
 def evaluate_timing(df, prob):
-    latest = df.iloc[-1]
 
-    price = latest['Close']
-    ma20 = latest['MA20']
-    rsi = latest['RSI']
+    if detect_breakout(df) and prob >= 60:
+        return "🚀 돌파 매수 타이밍 (추세 가속 구간)"
 
-    # 조건 기반 판단
-    if price > ma20 and 40 < rsi < 65 and prob >= 60:
-        return "✅ 지금 진입 적절 (추세 지속 구간)"
+    elif detect_pullback(df) and prob >= 60:
+        return "📉 눌림목 매수 타이밍 (저점 공략)"
 
-    elif price > ma20 and rsi >= 70:
-        return "⚠️ 단기 과열 (눌림목 대기 추천)"
-
-    elif price < ma20 and prob >= 60:
-        return "⏳ 추세는 좋지만 눌림 필요"
-
-    elif prob < 50:
-        return "❌ 매수 타이밍 아님"
+    elif prob >= 70:
+        return "⏳ 좋은 종목, 눌림 or 돌파 대기"
 
     else:
         return "🤔 관망 구간"
